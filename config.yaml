@@ -1,0 +1,205 @@
+# Model orchestrator config.
+# Every backend is an OpenAI-compatible upstream (/v1). The orchestrator is a
+# thin async proxy: route -> shape -> relay. Residency is probed, never assumed.
+
+listen:
+  host: 0.0.0.0
+  port: 8080
+
+# Optional bearer auth: when set, every /v1/* and /admin/* request must send
+# "Authorization: Bearer <key>" (/health stays open for liveness probes).
+# null disables the check — fine on a trusted LAN, set one if this box's
+# 0.0.0.0 bind is ever reachable from anywhere you don't control.
+api_key: null
+
+# CORS for browser-based dashboards; also exposes the x-orchestrator-*
+# response headers to browser JS.
+cors: true
+
+models:
+  glm:
+    upstream: http://127.0.0.1:8022/v1
+    upstream_model: glm-5.2
+    tags: [precise]
+    streaming: false        # shipinabottle returns 400 on stream=true; orchestrator synthesizes SSE
+    greedy_only: true       # sampling params are ignored upstream; strip them
+    vision: false
+    timeout_s: 7200         # ~2-21 s/token decode + cold prefill; do not lower casually
+    force_max_tokens: 512   # upstream default is 16, which truncates everything
+    fallback: [ornith]
+    unload_before_load: [ornith, ds4, gemma]
+    # DISABLED 2026-07-13 per Quinn: sub-1-tok/s decode makes it unusable in
+    # the routing/fallback/autoload paths for now. No automatic route points at
+    # glm; flip back to true and point routing.precise at glm once decode speed
+    # is fixed.
+    enabled: false
+    autoload: false
+    # greedy_only strips sampling params, so sampling_defaults is moot here —
+    # forced_params still applies (runs after the strip) and system_prompt is
+    # unaffected either way. Left unset.
+    forced_params: {}
+    system_prompt: null
+    # Quinn's standard invocation (serves on :8022).
+    launch_cmd: >
+      cd /home/quinna/tools/shipinabottle &&
+      PYTHONPATH=src SHIPINABOTTLE_CUDA=1 .venv/bin/python -m shipinabottle.server
+      --host 0.0.0.0 --port 8022
+      --model-dir /home/quinna/models/glm2.5/UD-Q4_K_M
+      --resident-budget-gib 45 --dense-cache-gib 18 --decoded-budget-gib 6
+      --gpu-cache-gib 8 --preload-hot-per-layer 0
+
+  ornith:
+    upstream: http://127.0.0.1:8091/v1
+    upstream_model: ornith-1.0-35b
+    tags: [default, fast, chat, code]
+    streaming: true
+    vision: false
+    # Serves /v1/embeddings too (llama-server pools the generative model's
+    # hidden state — fine for local semantic search; --embeddings flag added
+    # to launch_cmd below to enable the endpoint).
+    embeddings: true
+    timeout_s: 600
+    fallback: []             # glm removed while disabled (see glm.enabled note above)
+    unload_before_load: [glm, ds4]
+    load_timeout_s: 60       # mmap+NVMe cold start; measured well under this
+    # sampling_defaults: applied only if the client didn't already set that
+    # key (works for ANY OpenAI request field, not just these three).
+    # forced_params: always applied, overrides whatever the client sent —
+    # use for locking in behavior, not just filling a gap. Empty here; e.g.
+    # {top_p: 0.9} would pin nucleus sampling regardless of client input.
+    sampling_defaults:
+      temperature: 0.7
+    forced_params: {}
+    # Persistent per-model context. Applied as a single leading system
+    # message on every request to this model (coalesced with any
+    # system/developer messages already in the conversation — see
+    # shaping._coalesce_system_messages). This is the mechanism for "set
+    # context beforehand": it's injected server-side, so the client never has
+    # to resend it.
+    system_prompt: >
+      You are Ornith, the default chat model and router for this local
+      orchestrator. Handle ordinary chat, code, tools, and reasoning yourself.
+      When image or video support is needed, the server will call Gemma as a
+      narrow perception worker and provide Gemma's observation in the message
+      context; use that observation in your answer.
+    launch_cmd: >
+      llama-server -m /home/quinna/models/Ornith-1.0-35B-GGUF/ornith-1.0-35b-Q4_K_M.gguf
+      --port 8091 -ngl 999 -c 32768 --host 127.0.0.1 --embeddings
+
+  ds4:
+    upstream: http://127.0.0.1:8092/v1
+    # ds4-server aliases both quant families to these names; matches whichever
+    # GGUF is loaded via -m.
+    upstream_model: deepseek-v4-flash
+    tags: [agent, tools]
+    streaming: true
+    vision: false
+    timeout_s: 1200
+    fallback: [ornith]
+    enabled: true
+    autoload: true
+    unload_before_load: [ornith, glm, gemma]
+    # Measured 2026-07-13: time-to-resident (HTTP up) is ~9s cold — nowhere
+    # near the 180s default, that was never the bottleneck. 60s gives ample
+    # margin while still failing fast if something's actually wrong.
+    load_timeout_s: 60
+    # q2-imatrix downloaded via models/ds4/download_model.sh. Use the stable
+    # ds4flash.gguf symlink so changing quant targets only requires rerunning
+    # the downloader/link step, not editing this config.
+    # THE REAL BOTTLENECK (measured, not a cold-cache tax — cold and warm
+    # requests were both ~0.7-0.8s/token, ~1.4 tok/s): this quant's
+    # steady-state throughput on this hardware. A 500-token ds4 response is
+    # ~6+ minutes — long enough to hit a client-side timeout or look hung,
+    # which is what likely reads as "doesn't escalate" even when routing
+    # picked ds4 correctly. Two real levers, not yet tried: (1) confirm the
+    # client actually renders streaming tokens as they arrive (ds4 does
+    # stream — a client waiting for the full response instead of showing
+    # partial tokens will feel identically stuck either way); (2) try tuning
+    # --ssd-streaming-cache-experts / --ssd-streaming-preload-experts (see
+    # `ds4-server --help`) the way shipinabottle's expert-cache tuning helped
+    # GLM — unverified here, needs its own benchmark pass.
+    # Given generation is already slow here (~1.4 tok/s), forcing determinism
+    # matters more than sampling variety for tool-calling — e.g. forced_params
+    # {temperature: 0} would make ds4's tool-call decisions reproducible.
+    # Left empty; uncomment/fill in if you want that.
+    sampling_defaults: {}
+    forced_params: {}
+    system_prompt: null
+    launch_cmd: >
+      cd /home/quinna/models/ds4 &&
+      ./ds4-server -m ds4flash.gguf --backend cuda
+      --host 127.0.0.1 --port 8092 --ssd-streaming
+
+  gemma:
+    upstream: http://127.0.0.1:8093/v1
+    upstream_model: gemma-4
+    tags: [vision]
+    streaming: true
+    vision: true
+    timeout_s: 600
+    fallback: []            # nothing else can see images; fail loudly instead
+    unload_before_load: [glm, ds4]
+    unload_after_request: true
+    # Converted 2026-07-13: HF safetensors -> GGUF via this checkout's
+    # llama.cpp (Gemma4Model text + Gemma4VisionAudioModel --mmproj extractor
+    # in conversion/gemma.py), quantized to Q4_K_M (17.8 GiB, 4.87 BPW).
+    # Same lightweight mmap-based pattern as ornith now, not vllm.
+    # This used to be a separate hardcoded constant in server.py
+    # (GEMMA_MEDIA_SYSTEM), injected only on the Ornith-subagent path. Moved
+    # here so it's the single, config-editable source — shaping.py applies
+    # system_prompt uniformly for every model now, so no code duplicated it.
+    sampling_defaults: {}
+    forced_params: {}
+    system_prompt: >
+      You are Gemma running as a narrow image/video perception worker for
+      Ornith. Describe only the visual/media facts needed to answer the
+      user's request. Be concise, concrete, and avoid broader reasoning
+      unless it directly depends on visual evidence. Do not address the user
+      directly — your output is read by another model, not a person.
+    launch_cmd: >
+      llama-server -m /home/quinna/models/gemma/gemma4-Q4_K_M.gguf
+      --mmproj /home/quinna/models/gemma/mmproj-gemma4-f16.gguf
+      --port 8093 -ngl 999 --host 127.0.0.1
+
+# Client-facing model names that map to a backend (or "auto" for heuristic routing).
+# Unknown model names and gpt-* also auto-route.
+aliases:
+  auto: auto
+  default: auto
+  orchestrator: auto
+
+routing:
+  default: ornith
+  vision: gemma
+  tools_simple: ornith      # small/simple tool-call requests stay on the fast model
+  tools_complex: ds4        # escalate real agent work
+  # No automatic GLM routing right now. Ornith is the router and default chat
+  # model; ds4 handles higher-level text/tool work when the heuristics escalate.
+  precise: ds4
+  # A tools request is "complex" if any of these hold:
+  tools_complex_min_tools: 3
+  tools_complex_min_chars: 4000
+  # Escalation to routing.precise (ds4) fires on ANY of: an explicit client
+  # reasoning_effort:"high"/"medium", prompt length >= precise_min_chars, or
+  # a precise_patterns regex match. precise_patterns alone is narrowly
+  # math/proof-themed and misses "hard" prompts that aren't phrased that way
+  # (see Quinn's 2026-07-13 report: escalation wasn't firing on hard,
+  # non-mathematical prompts) — length + the explicit signal cover that gap.
+  # Kept moderate on purpose: ds4.unload_before_load makes every escalation
+  # kill Ornith first (see ds4's config below), so over-triggering makes
+  # things slower and more disruptive, not smoother. precise_min_chars is a
+  # starting point, not measured — tune after watching real traffic.
+  precise_min_chars: 2500
+  precise_patterns:
+    - '\b(prove|proof|theorem|lemma|derive|derivation)\b'
+    - '\b(exact(ly)?|precise(ly)?|verbatim|no mistakes|double.?check)\b'
+    - '\\(int|sum|frac|sqrt|begin\{)'   # LaTeX
+    - '[∫∑√∂≈≠≤≥]'
+    - '\b(step[- ]by[- ]step|multi[- ]step)\b'
+    - '\btrade-?offs?\b'
+    - '\b(root cause|corner case|edge case)\b'
+    - '\b(architect(ure)?|system design)\b'
+
+health:
+  interval_s: 15.0        # bumped from 5s: pure background polling, no need to be aggressive
+  probe_timeout_s: 1.5
