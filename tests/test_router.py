@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -357,9 +358,22 @@ def test_serving_candidates_skips_disabled(cfg):
     assert "ornith" in cands  # glm's fallback
 
 
-def test_embedding_candidates_auto_picks_embeddings_models(cfg):
+def test_embedding_candidates_auto_is_empty_without_a_capable_backend(cfg):
+    # Nothing in the deployed fleet sets embeddings: true, so auto-select has
+    # nothing to offer and the endpoint turns that into a clear 400.
     cands, reason = router.embedding_candidates({"model": "auto"}, cfg)
-    assert "ornith" in cands
+    assert cands == []
+    assert reason == "embeddings-auto"
+
+
+def test_embedding_candidates_auto_picks_embeddings_models(cfg):
+    # Synthesized rather than taken from config.yaml: llama-server's
+    # --embeddings restricts the process to embeddings only, so no chat model
+    # can also serve them. Build an isolated Cfg — the fixture is module-scoped.
+    embedder = dataclasses.replace(cfg.models["ornith"], name="embedder", embeddings=True)
+    local = dataclasses.replace(cfg, models={**cfg.models, "embedder": embedder})
+    cands, reason = router.embedding_candidates({"model": "auto"}, local)
+    assert cands == ["embedder"]
     assert reason == "embeddings-auto"
 
 

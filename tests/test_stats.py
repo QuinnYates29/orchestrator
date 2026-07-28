@@ -57,5 +57,9 @@ def test_config_defaults_for_new_fields():
     cfg = config.load(CONFIG_PATH)
     assert cfg.cors is True
     assert cfg.api_key is None
-    assert cfg.models["ornith"].embeddings is True
+    # No deployed backend serves embeddings: llama-server's --embeddings
+    # restricts the process to embeddings only, so turning it on for ornith
+    # would take down the default chat model. ornith sets the field
+    # explicitly, gemma leaves it at the default.
+    assert cfg.models["ornith"].embeddings is False
     assert cfg.models["gemma"].embeddings is False
