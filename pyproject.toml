@@ -10,12 +10,16 @@ dependencies = [
     "pyyaml>=6",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [project.scripts]
 orchestrator = "orchestrator.server:main"
+pipeline = "pipeline.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["orchestrator"]
+packages = ["orchestrator", "pipeline"]

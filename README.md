@@ -45,7 +45,7 @@ Operational endpoints (also behind auth when enabled, except `/health`):
 | Endpoint | Notes |
 |---|---|
 | `GET /health` | Liveness — always open, even with auth on. Returns resident set. |
-| `GET /admin/status` | Per-model resident flag, probe latency, managed PID, in-flight request count. |
+| `GET /admin/status` | Per-model resident flag, active/default launch profile, probe latency, managed PID, and in-flight request count. |
 | `GET /admin/stats` | Usage accounting: per-model request/error/token/latency totals, plus a ring buffer of recent routing decisions (each with `reason`, `text_chars`, `preferred`, token usage). See [Observability](#observability-and-tuning). |
 | `POST /admin/load` / `POST /admin/unload` | Explicit residency control (`wait_s`, `wait_idle_s`, `force`). |
 
@@ -194,6 +194,42 @@ Endpoints for managing residency directly:
   externally-started backends must be stopped externally.
 - `POST /admin/unload {"model": "ornith", "force": true}` — immediate
   `SIGTERM` without waiting for active requests to finish.
+
+### Named launch profiles
+
+A logical model can have several named runtime profiles in `config.yaml` under
+`launch_profiles:`. Routing and client requests still use the logical model
+name; profiles only choose the process command and memory-conflict policy.
+This keeps a model's OpenAI/API behavior stable while making operational
+tradeoffs explicit.
+
+DS4 includes two profiles:
+
+- `ds4-light` is the default autoload profile. It uses `--ssd-streaming`, has
+  lower memory use, and may coexist with Ornith.
+- `ds4-full` omits SSD streaming for fully resident weights and higher decode
+  throughput. It conflicts with Ornith, GLM, and Gemma, so the registry swaps
+  those managed processes out first.
+
+Profiles are also standard OpenAI-compatible model IDs. Any client can select
+one with its normal `model` field — for example Hermes can set
+`model.default: ds4-full` while keeping `base_url: http://127.0.0.1:8080/v1`.
+An explicit profile pin loads or switches to that managed profile when idle;
+the completion and `x-orchestrator-profile` response header identify it.
+
+Load a specific profile before an agent session:
+
+```sh
+curl -X POST http://127.0.0.1:8080/admin/load \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"ds4","profile":"ds4-full","wait_s":60}'
+```
+
+The shorter form `{"profile":"ds4-full"}` is also accepted. A model must be
+unloaded before switching its profile because both DS4 profiles use the same
+upstream port. The registry treats profile conflicts symmetrically, preventing
+an order-dependent attempt to load Ornith beside an already-resident
+`ds4-full`.
 
 ### GLM is currently disabled
 

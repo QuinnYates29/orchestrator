@@ -31,6 +31,18 @@ def _error(status: int, message: str, code: str) -> JSONResponse:
     )
 
 
+def _parse_json_bytes(content: bytes):
+    """Parse an upstream body defensively. Returns (data, ok). A backend that
+    returns a non-JSON 200 (truncation, a crash mid-response, an HTML error
+    page) must not surface as a 500 + traceback to the dashboard."""
+    if not content:
+        return None, True
+    try:
+        return json.loads(content), True
+    except (json.JSONDecodeError, ValueError):
+        return None, False
+
+
 def _chunk_sse(data: dict) -> bytes:
     return b"data: " + json.dumps(data, separators=(",", ":")).encode() + b"\n\n"
 
@@ -83,7 +95,7 @@ def create_app(cfg: Cfg) -> FastAPI:
             limits=httpx.Limits(max_connections=64, max_keepalive_connections=32)
         )
         app.state.registry = Registry(cfg, app.state.client)
-        await app.state.registry.start()
+        await app.state.registry.start(LOG_DIR)
         yield
         await app.state.registry.stop()
         await app.state.client.aclose()
@@ -167,14 +179,15 @@ def create_app(cfg: Cfg) -> FastAPI:
                 return _error(502, f"backend {gemma_name} refused connection at {gemma_cfg.upstream}", "backend_down")
             except httpx.TimeoutException:
                 return _error(504, f"backend {gemma_name} timed out after {gemma_cfg.timeout_s}s", "backend_timeout")
-            if r.status_code != 200:
-                try:
-                    data = r.json()
-                except Exception:
-                    data = {"error": {"message": r.text, "type": "backend_error", "code": "vision_backend_error"}}
-                _record(gemma_name, r.status_code)
-                return JSONResponse(status_code=r.status_code, content=data, headers=base_headers)
-            body = shaping.with_gemma_observation(body, _completion_text(r.json()))
+            vision_data, ok_json = _parse_json_bytes(r.content)
+            if r.status_code != 200 or not ok_json:
+                _record(gemma_name, r.status_code if r.status_code != 200 else 502)
+                if vision_data is None:
+                    vision_data = {"error": {"message": r.text, "type": "backend_error",
+                                             "code": "vision_backend_error"}}
+                return JSONResponse(status_code=r.status_code if r.status_code != 200 else 502,
+                                    content=vision_data, headers=base_headers)
+            body = shaping.with_gemma_observation(body, _completion_text(vision_data))
             base_headers["x-orchestrator-vision-model"] = gemma_name
             if gemma_cfg.unload_after_request:
                 try:
@@ -189,6 +202,7 @@ def create_app(cfg: Cfg) -> FastAPI:
             """One upstream try. Returns a response, or None for connect
             failure (caller moves on to the next candidate)."""
             m = cfg.models[name]
+            served_model_id = route.profile if route.profile and name == route.preferred else name
             upstream_body, synthesize = shaping.shape(body, m)
             url = f"{m.upstream.rstrip('/')}{endpoint}"
             timeout = httpx.Timeout(m.timeout_s, connect=10.0)
@@ -207,13 +221,16 @@ def create_app(cfg: Cfg) -> FastAPI:
                 if synthesize:
                     r = await client.post(url, json=upstream_body, timeout=timeout)
                     await release_active()
-                    completion = r.json()
+                    completion, ok_json = _parse_json_bytes(r.content)
+                    if not ok_json:
+                        _record(name, 502, autoloaded=autoloaded)
+                        return _error(502, f"backend {name} returned a non-JSON response", "bad_upstream_response")
                     _record(name, r.status_code, autoloaded=autoloaded,
                             usage=completion.get("usage") if isinstance(completion, dict) else None)
                     if r.status_code != 200:
                         return JSONResponse(status_code=r.status_code, content=completion, headers=headers)
                     return StreamingResponse(
-                        _synthesized_sse(completion, name), media_type="text/event-stream", headers=headers
+                        _synthesized_sse(completion, served_model_id), media_type="text/event-stream", headers=headers
                     )
 
                 req = client.build_request("POST", url, json=upstream_body, timeout=timeout)
@@ -222,12 +239,15 @@ def create_app(cfg: Cfg) -> FastAPI:
                     content = await r.aread()
                     await r.aclose()
                     await release_active()
-                    data = json.loads(content) if content else None
+                    data, ok_json = _parse_json_bytes(content)
+                    if not ok_json:
+                        _record(name, 502, autoloaded=autoloaded)
+                        return _error(502, f"backend {name} returned a non-JSON response", "bad_upstream_response")
                     # Backends echo their own idea of "model" (llama.cpp: the raw
                     # .gguf path) — clients read this field, so it should name
                     # what actually served the request, not upstream internals.
                     if r.status_code == 200 and isinstance(data, dict) and "model" in data:
-                        data["model"] = name
+                        data["model"] = served_model_id
                     _record(name, r.status_code, autoloaded=autoloaded,
                             usage=data.get("usage") if isinstance(data, dict) else None)
                     return JSONResponse(status_code=r.status_code, content=data, headers=headers)
@@ -239,7 +259,7 @@ def create_app(cfg: Cfg) -> FastAPI:
                             if line.startswith("data: ") and line[6:].strip() != "[DONE]":
                                 try:
                                     obj = json.loads(line[6:])
-                                    obj["model"] = name
+                                    obj["model"] = served_model_id
                                     if isinstance(obj.get("usage"), dict):
                                         usage = obj["usage"]
                                     line = "data: " + json.dumps(obj, separators=(",", ":"))
@@ -273,12 +293,19 @@ def create_app(cfg: Cfg) -> FastAPI:
         tried: list[str] = []
         for name in candidates:
             autoloaded = False
-            if name not in registry.resident:
-                if not await registry.ensure_resident(name, LOG_DIR):
+            requested_profile = route.profile if name == route.preferred else None
+            profile_mismatch = (
+                requested_profile is not None
+                and registry.active_profiles.get(name) != requested_profile
+            )
+            if name not in registry.resident or profile_mismatch:
+                if not await registry.ensure_resident(name, LOG_DIR, requested_profile):
                     continue
                 autoloaded = True
             headers = dict(base_headers)
             headers["x-orchestrator-model"] = name
+            if route.profile and name == route.preferred:
+                headers["x-orchestrator-profile"] = route.profile
             if name != route.preferred:
                 headers["x-orchestrator-preferred"] = route.preferred
             if autoloaded:
@@ -393,6 +420,11 @@ def create_app(cfg: Cfg) -> FastAPI:
              "alias_of": target}
             for alias, target in cfg.aliases.items()
         ]
+        data += [
+            {"id": name, "object": "model", "created": now, "owned_by": "orchestrator",
+             "profile_of": p.model, "description": p.description}
+            for name, p in cfg.launch_profiles.items()
+        ]
         return {"object": "list", "data": data}
 
     @app.get("/v1/models/{model_id}")
@@ -407,6 +439,11 @@ def create_app(cfg: Cfg) -> FastAPI:
         if model_id in cfg.aliases:
             return {"id": model_id, "object": "model", "created": now,
                     "owned_by": "orchestrator", "alias_of": cfg.aliases[model_id]}
+        if model_id in cfg.launch_profiles:
+            p = cfg.launch_profiles[model_id]
+            return {"id": model_id, "object": "model", "created": now,
+                    "owned_by": "orchestrator", "profile_of": p.model,
+                    "description": p.description}
         return _error(404, f"model {model_id!r} not found", "model_not_found")
 
     @app.get("/health")
@@ -425,16 +462,32 @@ def create_app(cfg: Cfg) -> FastAPI:
     async def admin_load(request: Request):
         body = await request.json()
         name = body.get("model", "")
+        profile = body.get("profile")
         wait_s = body.get("wait_s")
+        # Permit the concise {"profile":"ds4-full"} form as well as the
+        # explicit {"model":"ds4", "profile":"ds4-full"} form.
+        if not name and profile in cfg.launch_profiles:
+            name = cfg.launch_profiles[profile].model
         if name not in cfg.models:
             return _error(404, f"unknown model {name!r}", "model_not_found")
+        try:
+            cfg.profile_for(name, profile)
+        except ValueError as e:
+            return _error(400, str(e), "launch_profile_invalid")
 
         registry: Registry = app.state.registry
         if name in registry.resident:
+            active_profile = registry.active_profiles.get(name)
+            if profile and profile != active_profile:
+                return _error(
+                    409,
+                    f"{name} is already resident with profile {active_profile or 'external'}; unload it before switching profiles",
+                    "profile_switch_requires_unload",
+                )
             detail = f"{name} already resident"
         else:
             try:
-                detail = await registry.launch_for_load(name, LOG_DIR)
+                detail = await registry.launch_for_load(name, LOG_DIR, profile)
             except ValueError as e:
                 return _error(400, str(e), "launch_unavailable")
 
@@ -442,8 +495,8 @@ def create_app(cfg: Cfg) -> FastAPI:
             ready = await registry.wait_resident(name, float(wait_s))
             if not ready:
                 return _error(504, f"{name} not resident after {wait_s}s", "load_timeout")
-            return {"ok": True, "resident": True, "detail": detail}
-        return {"ok": True, "detail": detail}
+            return {"ok": True, "resident": True, "profile": registry.active_profiles.get(name), "detail": detail}
+        return {"ok": True, "profile": registry.active_profiles.get(name), "detail": detail}
 
     @app.post("/admin/unload")
     async def admin_unload(request: Request):

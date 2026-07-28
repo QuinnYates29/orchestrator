@@ -54,13 +54,12 @@ models:
     tags: [default, fast, chat, code]
     streaming: true
     vision: false
-    # Serves /v1/embeddings too (llama-server pools the generative model's
-    # hidden state — fine for local semantic search; --embeddings flag added
-    # to launch_cmd below to enable the endpoint).
-    embeddings: true
+    embeddings: false
     timeout_s: 600
     fallback: []             # glm removed while disabled (see glm.enabled note above)
-    unload_before_load: [glm, ds4]
+    # Ornith can coexist with ds4-light. ds4-full declares the reciprocal
+    # conflict, so it still gets exclusive use of memory when selected.
+    unload_before_load: [glm]
     load_timeout_s: 60       # mmap+NVMe cold start; measured well under this
     # sampling_defaults: applied only if the client didn't already set that
     # key (works for ANY OpenAI request field, not just these three).
@@ -84,7 +83,8 @@ models:
       context; use that observation in your answer.
     launch_cmd: >
       llama-server -m /home/quinna/models/Ornith-1.0-35B-GGUF/ornith-1.0-35b-Q4_K_M.gguf
-      --port 8091 -ngl 999 -c 32768 --host 127.0.0.1 --embeddings
+      --port 8091 -ngl 999 --ctx-size 262144 --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0
+      --host 127.0.0.1 --parallel 4 --cont-batching --kv-unified
 
   ds4:
     upstream: http://127.0.0.1:8092/v1
@@ -98,7 +98,10 @@ models:
     fallback: [ornith]
     enabled: true
     autoload: true
-    unload_before_load: [ornith, glm, gemma]
+    # Lifecycle uses named profiles below. Auto-routing/autoload selects
+    # ds4-light; request ds4-full explicitly via POST /admin/load when fast,
+    # fully resident DS4 is wanted.
+    default_profile: ds4-light
     # Measured 2026-07-13: time-to-resident (HTTP up) is ~9s cold — nowhere
     # near the 180s default, that was never the bottleneck. 60s gives ample
     # margin while still failing fast if something's actually wrong.
@@ -125,10 +128,6 @@ models:
     sampling_defaults: {}
     forced_params: {}
     system_prompt: null
-    launch_cmd: >
-      cd /home/quinna/models/ds4 &&
-      ./ds4-server -m ds4flash.gguf --backend cuda
-      --host 127.0.0.1 --port 8092 --ssd-streaming
 
   gemma:
     upstream: http://127.0.0.1:8093/v1
@@ -160,6 +159,29 @@ models:
       llama-server -m /home/quinna/models/gemma/gemma4-Q4_K_M.gguf
       --mmproj /home/quinna/models/gemma/mmproj-gemma4-f16.gguf
       --port 8093 -ngl 999 --host 127.0.0.1
+
+# Named launch profiles keep one logical API model (for routing and clients)
+# while making its runtime/memory policy explicit. Profile conflicts are
+# enforced in both directions by the registry: a resident ds4-full prevents a
+# later Ornith load, but ds4-light and Ornith are deliberately allowed together.
+launch_profiles:
+  ds4-light:
+    model: ds4
+    description: SSD-streaming DS4; lower memory use, suitable alongside Ornith.
+    unload_before_load: [glm]
+    launch_cmd: >
+      cd /home/quinna/models/ds4 &&
+      ./ds4-server -m ds4flash.gguf --backend cuda
+      --host 127.0.0.1 --port 8092 --ctx 100000 --ssd-streaming
+
+  ds4-full:
+    model: ds4
+    description: Fully resident DS4; about 115 GiB at 80k context and ~11-12 tok/s.
+    unload_before_load: [ornith, glm, gemma]
+    launch_cmd: >
+      cd /home/quinna/models/ds4 &&
+      ./ds4-server -m ds4flash.gguf --backend cuda
+      --host 127.0.0.1 --port 8092 --ctx 100000
 
 # Client-facing model names that map to a backend (or "auto" for heuristic routing).
 # Unknown model names and gpt-* also auto-route.

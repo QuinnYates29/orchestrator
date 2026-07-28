@@ -15,6 +15,7 @@ class Route:
     preferred: str   # config model name the heuristics picked
     reason: str
     forced: bool = False  # client pinned a real model name; never fall back silently
+    profile: str | None = None  # explicit launch profile selected through the OpenAI model id
 
 
 @lru_cache(maxsize=64)
@@ -130,6 +131,9 @@ def decide_chat(body: dict, cfg: Cfg) -> Route:
     # Explicit pin to a real backend name: honor it, no heuristics, no fallback.
     if requested in cfg.models:
         return Route(requested, "client-pinned", forced=True)
+    if requested in cfg.launch_profiles:
+        return Route(cfg.launch_profiles[requested].model, "client-profile", forced=True,
+                     profile=requested)
     alias_target = cfg.aliases.get(requested)
     if alias_target and alias_target != "auto":
         return Route(alias_target, f"alias:{requested}")
@@ -169,6 +173,9 @@ def decide_completion(body: dict, cfg: Cfg) -> Route:
     requested = str(body.get("model") or "auto")
     if requested in cfg.models:
         return Route(requested, "client-pinned", forced=True)
+    if requested in cfg.launch_profiles:
+        return Route(cfg.launch_profiles[requested].model, "client-profile", forced=True,
+                     profile=requested)
     alias_target = cfg.aliases.get(requested)
     if alias_target and alias_target != "auto":
         return Route(alias_target, f"alias:{requested}")

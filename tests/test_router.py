@@ -203,6 +203,14 @@ def test_explicit_model_name_is_forced_pin(cfg):
     assert route.forced is True
 
 
+def test_profile_model_name_is_a_forced_pin(cfg):
+    route = router.decide_chat(_chat("hi", model="ds4-full"), cfg)
+    assert route.preferred == "ds4"
+    assert route.profile == "ds4-full"
+    assert route.reason == "client-profile"
+    assert route.forced is True
+
+
 def test_alias_orchestrator_auto_routes_by_content(cfg):
     route = router.decide_chat(_chat("hi", model="orchestrator"), cfg)
     assert route.preferred == "ornith"
@@ -249,8 +257,24 @@ def test_resolve_nonforced_falls_back_through_chain(cfg):
 def test_ds4_is_enabled_after_download(cfg):
     assert cfg.models["ds4"].enabled is True
     assert cfg.models["ds4"].autoload is True
-    assert "ds4flash.gguf" in cfg.models["ds4"].launch_cmd
-    assert cfg.models["ds4"].unload_before_load == ["ornith", "glm", "gemma"]
+    assert cfg.models["ds4"].default_profile == "ds4-light"
+    assert "--ssd-streaming" in cfg.launch_profiles["ds4-light"].launch_cmd
+    assert "--ssd-streaming" not in cfg.launch_profiles["ds4-full"].launch_cmd
+    assert cfg.launch_profiles["ds4-full"].unload_before_load == ["ornith", "glm", "gemma"]
+
+
+def test_ds4_light_and_ornith_can_coexist_but_full_conflicts(cfg):
+    registry = Registry(cfg, client=None)
+    registry.resident = {"ornith"}
+    assert registry._conflicts_for_load("ds4", "ds4-light") == []
+    assert registry._conflicts_for_load("ds4", "ds4-full") == ["ornith"]
+
+
+def test_full_profile_conflict_is_symmetric(cfg):
+    registry = Registry(cfg, client=None)
+    registry.resident = {"ds4"}
+    registry.active_profiles["ds4"] = "ds4-full"
+    assert registry._conflicts_for_load("ornith") == ["ds4"]
 
 
 def test_heavy_model_load_unloads_managed_conflicts(cfg, monkeypatch, tmp_path):
@@ -270,18 +294,18 @@ def test_heavy_model_load_unloads_managed_conflicts(cfg, monkeypatch, tmp_path):
         registry.resident.discard(name)
         return f"terminated {name}"
 
-    def fake_launch(name, log_dir):
-        called.append(f"launch:{name}")
+    def fake_launch(name, log_dir, profile=None):
+        called.append(f"launch:{name}:{profile}")
         return f"launched {name}"
 
     monkeypatch.setattr(registry, "_probe", fake_probe)
     monkeypatch.setattr(registry, "terminate", fake_terminate)
     monkeypatch.setattr(registry, "launch", fake_launch)
 
-    detail = asyncio.run(registry.launch_for_load("ds4", tmp_path))
+    detail = asyncio.run(registry.launch_for_load("ds4", tmp_path, "ds4-full"))
 
     assert detail == "launched ds4"
-    assert called == ["terminate:ornith", "terminate:gemma", "launch:ds4"]
+    assert called == ["terminate:ornith", "terminate:gemma", "launch:ds4:ds4-full"]
 
 
 def test_heavy_model_load_refuses_external_conflict(cfg, monkeypatch, tmp_path):
@@ -294,7 +318,7 @@ def test_heavy_model_load_refuses_external_conflict(cfg, monkeypatch, tmp_path):
     monkeypatch.setattr(registry, "_probe", fake_probe)
 
     with pytest.raises(ValueError, match="ornith is resident"):
-        asyncio.run(registry.launch_for_load("ds4", tmp_path))
+        asyncio.run(registry.launch_for_load("ds4", tmp_path, "ds4-full"))
 
 
 def test_resolve_skips_disabled_model_in_chain(cfg):
