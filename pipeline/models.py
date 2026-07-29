@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from .config import VerifyCfg
+from .verify import VerifyResult
+
 
 @dataclass
 class RunConfig:
@@ -31,6 +34,7 @@ class RunConfig:
         "planner": "ds4-full", "worker": "ornith", "supervisor": "ds4-light",
         "merger": "ds4-full", "explorer": "ornith",
     })
+    verify: VerifyCfg = field(default_factory=VerifyCfg)
 
     def resolved_scratch_dir(self) -> Path:
         return self.scratch_dir or (self.repo / ".pipeline-runs")
@@ -65,6 +69,7 @@ class AgentStatus(str, Enum):
     KILLED = "killed"
     TIMED_OUT = "timed_out"     # run_shell dead-man's-switch fired
     FAILED = "failed"           # terminal - retry exhausted, or a non-recoverable error
+    VERIFY_FAILED = "verify_failed"  # agent exhausted repair attempts without passing verification
 
 
 @dataclass
@@ -91,6 +96,8 @@ class AgentState:
     kill_reason: str = ""
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
+    submitted: dict | None = None
+    repair_attempts: int = 0
 
     @property
     def label(self) -> str:
@@ -114,6 +121,8 @@ class ChunkOutcome:
     workspace: Path | None
     kill_reason: str = ""
     attempts: int = 1
+    verify: VerifyResult | None = None
+    submitted: dict | None = None
 
 
 @dataclass

@@ -19,7 +19,8 @@ import time
 
 from .client import OrchestratorClient
 from .models import AgentState, AgentStatus, Plan, PlanChunk, RunConfig, ToolCallRecord
-from .tools import TOOL_SCHEMAS, ProcessTimeout, execute_tool
+from .tools import SUBMIT_WORK_TOOL, TOOL_SCHEMAS, ProcessTimeout, execute_tool
+from .verify import run_verify
 from .workspace import finalize_agent_commit
 
 log = logging.getLogger("pipeline.worker")
@@ -46,11 +47,50 @@ def build_initial_messages(chunk: PlanChunk, plan: Plan, retry_context: str = ""
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def _build_nudge_message() -> dict:
+    return {
+        "role": "user",
+        "content": "You did not call any tool this turn. "
+                    "Call `submit_work` when you are done, or keep working."
+    }
+
+
+def _build_verify_failure_message(command: str, exit_code: int | None, output_tail: str) -> dict:
+    return {
+        "role": "user",
+        "content": (
+            f"Verification failed.\n\n"
+            f"Command: {command}\n"
+            f"Exit code: {exit_code}\n"
+            f"Output (tail):\n{output_tail}\n\n"
+            "Fix the cause of the failure and call `submit_work` again."
+        )
+    }
+
+
+def _build_submit_verify_prompt(verify_cfg) -> str:
+    """Build a system-prompt addendum explaining the verification contract."""
+    cmd = verify_cfg.command or "(none configured)"
+    return (
+        f"\n\nVerification: after calling submit_work, the system runs "
+        f"`{cmd}`. If it fails, you will be asked to fix the problem and "
+        f"call submit_work again. You have up to {verify_cfg.max_repair_attempts} "
+        f"repair attempts."
+    )
+
+
 async def run_agent(client: OrchestratorClient, config: RunConfig, plan: Plan, state: AgentState) -> None:
     """Runs the agent loop for `state` to a terminal status. Mutates `state`
     in place; does not return it (the caller already holds the reference)."""
     state.status = AgentStatus.RUNNING
+    no_tool_streak = 0
+
     try:
+        # Append verification instructions to the system message
+        # If verify is configured, tell the agent about it
+        if config.verify.configured:
+            state.messages[0]["content"] += _build_submit_verify_prompt(config.verify)
+
         while state.turns < config.max_agent_turns:
             state.turns += 1
             state.reasoning_buffer = ""  # this turn's live thinking - reset per turn, not cumulative
@@ -59,7 +99,7 @@ async def run_agent(client: OrchestratorClient, config: RunConfig, plan: Plan, s
             assistant_content = ""
 
             async for event in client.chat_stream(
-                config.model_for("worker"), state.messages, tools=TOOL_SCHEMAS,
+                config.model_for("worker"), state.messages, tools=TOOL_SCHEMAS + [SUBMIT_WORK_TOOL],
                 tool_choice="auto", max_tokens=8192,
             ):
                 if event.reasoning_delta:
@@ -82,12 +122,52 @@ async def run_agent(client: OrchestratorClient, config: RunConfig, plan: Plan, s
             state.messages.append(assistant_msg)
 
             if not tool_calls:
-                state.status = AgentStatus.COMPLETED
-                break
+                # No tool calls — nudge once, fail on second occurrence
+                if no_tool_streak >= 1:
+                    state.status = AgentStatus.FAILED
+                    state.kill_reason = "agent stopped producing tool calls and did not call submit_work"
+                    break
+                no_tool_streak += 1
+                state.messages.append(_build_nudge_message())
+                continue
+
+            # Reset the no-tool streak since the agent did call something
+            no_tool_streak = 0
 
             timed_out = False
             for tc in tool_calls:
                 call_id = tc["id"] or f"call_{state.turns}"
+
+                # --- submit_work is terminal and handled here, not dispatched ---
+                if tc["name"] == "submit_work":
+                    state.submitted = tc["arguments"]
+                    state.tool_call_log.append(ToolCallRecord(
+                        id=call_id, name=tc["name"], arguments=tc["arguments"], result_summary="",
+                    ))
+                    # Run verification
+                    verify_result = await run_verify(config.verify, state.workspace)
+                    # If verification passes or is skipped, agent is done
+                    if verify_result.ok or verify_result.skipped:
+                        state.status = AgentStatus.COMPLETED
+                        break
+                    else:
+                        # Verification failed — append a user message to repair
+                        state.repair_attempts += 1
+                        if state.repair_attempts > config.verify.max_repair_attempts:
+                            state.status = AgentStatus.VERIFY_FAILED
+                            state.kill_reason = (
+                                f"verification failed after {config.verify.max_repair_attempts} "
+                                f"repair attempts"
+                            )
+                            break
+                        state.messages.append(_build_verify_failure_message(
+                            config.verify.command, verify_result.exit_code, verify_result.output_tail,
+                        ))
+                        # Stop processing tool calls this turn; the agent will
+                        # see the repair message and retry on the next turn.
+                        break
+                # --- end submit_work handling ---
+
                 try:
                     result = await execute_tool(
                         tc["name"], tc["arguments"], state.workspace, config.run_shell_timeout_s,
@@ -106,6 +186,10 @@ async def run_agent(client: OrchestratorClient, config: RunConfig, plan: Plan, s
                 state.messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
 
             if timed_out:
+                break
+
+            # If we broke due to submit_work completing or exhausting repairs
+            if state.status in (AgentStatus.COMPLETED, AgentStatus.VERIFY_FAILED):
                 break
         else:
             state.status = AgentStatus.FAILED
