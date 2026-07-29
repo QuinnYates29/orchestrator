@@ -1,9 +1,10 @@
 """Entrypoint for the pipeline's workflows.
 
-    pipeline run   --repo PATH --task "..."    fan-out/merge (plan -> N agents -> merge)
-    pipeline solo  --repo PATH --task "..."    single agent, one working directory
+    pipeline run     --repo PATH --task "..."    fan-out/merge (plan -> N agents -> merge)
+    pipeline solo    --repo PATH --task "..."    single agent, one working directory
+    pipeline explore --repo PATH --question "..."   read-only research fan-out
 
-Later phases add `explore`, `resume`, and `runs`. `run` keeps every flag it had
+Later phases add `resume` and `runs`. `run` keeps every flag it had
 before the subcommand split, so existing invocations work by inserting the word
 `run`.
 """
@@ -21,6 +22,7 @@ from .client import OrchestratorClient
 from .events import EventLog
 from .merger import merge
 from .models import AgentState, AgentStatus, ChunkOutcome, RunConfig, RunReport
+from .explore import explore_session
 from .planner import create_plan
 from .solo import solo_session
 from .supervisor import supervise
@@ -86,6 +88,44 @@ def build_parser() -> argparse.ArgumentParser:
                              "from config.yaml.")
     solo_p.add_argument("--no-load", action="store_true",
                         help="Skip the /admin/load residency check (the backend is already up).")
+
+    explore_p = sub.add_parser(
+        "explore", help="Read-only research fan-out: split a question, answer sub-questions "
+                        "with read-only tools, synthesize a final answer.",
+        description="Ask a question about a repository without cloning or writing anything. The "
+                    "explored repo is read with read_file, list_dir, grep, and glob only. The "
+                    "answer fans out to N independent sub-questions answered concurrently, then "
+                    "synthesizes a final answer with file-level attribution.",
+    )
+    # explore uses --question instead of --task; do not call _add_common_args
+    # because it forces --task/--task-file to be required.
+    explore_p.add_argument("--repo", type=Path, default=Path.cwd(),
+                   help="Target repository root. Defaults to the current directory.")
+    explore_p.add_argument("--question", required=True,
+                           help="Free-text question to answer by reading the repo.")
+    explore_p.add_argument("--orchestrator-url", default="http://127.0.0.1:8080/v1")
+    explore_p.add_argument("--admin-url", default="http://127.0.0.1:8080")
+    explore_p.add_argument("--api-key", default=os.environ.get("ORCHESTRATOR_API_KEY"))
+    explore_p.add_argument("--config", type=Path, default=None,
+                   help="Path to config.yaml holding the `pipeline:` block. Defaults to the one "
+                        "next to the package.")
+    explore_p.add_argument("--scratch-dir", type=Path, default=None,
+                   help="Where run artifacts (event log, agent clones) live. Defaults to "
+                        "<repo>/.pipeline-runs.")
+    explore_p.add_argument("--load-wait-s", type=float, default=180.0,
+                           help="How long each /admin/load call blocks waiting for a model to become resident.")
+    explore_p.add_argument("--run-shell-timeout-s", type=float, default=900.0,
+                           help="Dead-man's-switch on a single run_shell call (default 15min).")
+    explore_p.add_argument("--max-agent-turns", type=int, default=None,
+                   help="Override pipeline.limits.max_agent_turns from config.yaml.")
+    explore_p.add_argument("--model", default=None,
+                           help="Model or launch profile to use for the explorer role. "
+                                "Defaults to pipeline.roles.explorer from config.yaml.")
+    explore_p.add_argument("--max-questions", type=int, default=6,
+                           help="Maximum number of sub-questions the explorer may produce "
+                                "(default 6).")
+    explore_p.add_argument("--no-load", action="store_true",
+                           help="Skip the /admin/load residency check (the backend is already up).")
     return p
 
 
@@ -269,12 +309,54 @@ def _cmd_run(args, pcfg) -> int:
     return 0 if not report.failed else 1
 
 
+def _cmd_explore(args, pcfg) -> int:
+    repo = args.repo.resolve()
+    if not repo.exists():
+        raise SystemExit(f"{repo} does not exist")
+    config = _build_run_config(args, pcfg)
+    config.task = args.question  # use --question instead of --task
+    model = args.model or pcfg.roles.explorer
+    events = EventLog.for_run(config.resolved_scratch_dir(), config.run_id)
+
+    print(f"explore run {config.run_id}: {model} in {repo}", file=sys.stderr)
+    print(f"events: {events.path}", file=sys.stderr)
+
+    result = asyncio.run(explore_session(
+        model=model, repo=repo, question=args.question,
+        orchestrator_url=args.orchestrator_url, admin_url=args.admin_url,
+        api_key=args.api_key, pipeline_cfg=pcfg,
+        max_questions=args.max_questions,
+        agent_max_turns=args.max_agent_turns or pcfg.limits.max_agent_turns,
+        events=events,
+        load_wait_s=args.load_wait_s,
+        ensure_resident=not args.no_load,
+    ))
+
+    # Print the final synthesized answer to stdout so it can be piped.
+    print(result.final_answer)
+    # Print the per-sub-question breakdown to stderr.
+    print(f"\n=== explore {config.run_id} ===", file=sys.stderr)
+    print(f"model: {model}  turns: {result.duration_s / 60:.1f} min", file=sys.stderr)
+    print(f"tokens: {result.prompt_tokens} prompt / {result.completion_tokens} completion",
+          file=sys.stderr)
+    print(f"\nSub-questions ({len(result.sub_questions)}):", file=sys.stderr)
+    for sa in result.sub_answers:
+        if sa.answer:
+            print(f"  - {sa.question}", file=sys.stderr)
+        else:
+            reason = sa.error or sa.stop_reason or "no answer"
+            print(f"  - {sa.question} [UNANSWERED: {reason}]", file=sys.stderr)
+    return 0
+
+
 def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
     pcfg = pipeline_config.load(args.config)
     if args.command == "solo":
         return _cmd_solo(args, pcfg)
+    if args.command == "explore":
+        return _cmd_explore(args, pcfg)
     return _cmd_run(args, pcfg)
 
 
