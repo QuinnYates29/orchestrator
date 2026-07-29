@@ -341,11 +341,12 @@ async def execute_plan(
             outcomes.append(prior)
             events.emit("chunk_reused", chunk=chunk.id, status=prior.status.value)
 
-    # The integration repo must exist before the first wave tries to merge
-    # into it. _init_integration_repo was written but never called, so
-    # _integrate_chunk ran git in a directory that did not exist.
-    if len(waves) > 1:
-        await _init_integration_repo(integration_path, config.repo, base_commit)
+    # The integration repo must exist before anything tries to merge into it.
+    # _init_integration_repo was written but never called, so _integrate_chunk
+    # ran git in a directory that did not exist. Initialise unconditionally:
+    # integration runs per completed chunk, not per wave boundary, so a
+    # single-wave plan reaches it too. It is a local clone, so this is cheap.
+    await _init_integration_repo(integration_path, config.repo, base_commit)
 
     # --- Supervisor covers the *entire* execution phase across all waves.
     agents: dict[str, tuple[AgentState, asyncio.Task]] = {}
