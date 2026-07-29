@@ -43,6 +43,12 @@ class SoloResult:
     messages: list[dict] = field(default_factory=list)
 
 
+EMPTY_TURN_NUDGE = (
+    "Your last message was empty - no text and no tool call. Do not think "
+    "further about the task in the abstract. Take the single next concrete "
+    "action now: call a tool, or state your final answer as plain text."
+)
+
 SYSTEM_PROMPT = (
     "You are an autonomous coding agent working directly in a real repository. You have full tool "
     "access (read_file, write_file, list_dir, run_shell) in your working directory.\n\n"
@@ -64,6 +70,7 @@ async def run_solo(
     max_turns: int = 60,
     run_shell_timeout_s: float = 900.0,
     max_tokens: int = 8192,
+    max_empty_retries: int = 2,
     events: EventLog | None = None,
     system_prompt: str = SYSTEM_PROMPT,
 ) -> SoloResult:
@@ -78,6 +85,7 @@ async def run_solo(
         {"role": "user", "content": task},
     ]
     result = SoloResult(ok=False, turns=0, messages=messages)
+    empty_turns = 0
 
     events.emit("solo_start", model=model, repo=str(repo), max_turns=max_turns)
 
@@ -88,6 +96,7 @@ async def run_solo(
         content = ""
         reasoning_chars = 0
         usage: dict | None = None
+        finish_reason = ""
 
         try:
             async for event in client.chat_stream(
@@ -99,8 +108,10 @@ async def run_solo(
                     content += event.content_delta
                 if event.usage:
                     usage = event.usage
-                if event.finish_reason and event.tool_calls:
-                    tool_calls = event.tool_calls
+                if event.finish_reason:
+                    finish_reason = event.finish_reason
+                    if event.tool_calls:
+                        tool_calls = event.tool_calls
         except OrchestratorError as e:
             log.error("turn %d: orchestrator returned %s: %s", result.turns, e.status_code, e.body)
             events.emit("solo_error", turn=result.turns, status_code=e.status_code, body=str(e.body))
@@ -126,10 +137,38 @@ async def run_solo(
         messages.append(assistant)
 
         log.info(
-            "turn %d: %d tool call(s), %d content chars, %d reasoning chars, %.0fs",
+            "turn %d: %d tool call(s), %d content chars, %d reasoning chars, %s, %.0fs",
             result.turns, len(tool_calls), len(content), reasoning_chars,
-            time.monotonic() - turn_started,
+            finish_reason or "no finish_reason", time.monotonic() - turn_started,
         )
+
+        # A turn with no tool calls AND no content is not a finished task, it is
+        # a model that reasoned itself into producing nothing. Ornith does this:
+        # 34k characters of reasoning_content, then an empty message. Treating
+        # it as success reports a phase as complete having written no files.
+        if not tool_calls and not content.strip():
+            messages.pop()  # an empty assistant turn teaches the next turn nothing
+            empty_turns += 1
+            log.warning(
+                "turn %d: empty response (%d reasoning chars, finish_reason=%s), nudge %d/%d",
+                result.turns, reasoning_chars, finish_reason or "none",
+                empty_turns, max_empty_retries,
+            )
+            events.emit("solo_empty_turn", turn=result.turns, empty_turns=empty_turns,
+                        finish_reason=finish_reason, reasoning_chars=reasoning_chars)
+            if empty_turns > max_empty_retries:
+                result.stop_reason = "empty_response"
+                result.final_message = (
+                    f"model returned {empty_turns} empty responses in a row "
+                    f"(last: {reasoning_chars} reasoning chars, finish_reason="
+                    f"{finish_reason or 'none'}); giving up rather than reporting success"
+                )
+                log.error(result.final_message)
+                break
+            messages.append({"role": "user", "content": EMPTY_TURN_NUDGE})
+            continue
+
+        empty_turns = 0
 
         if not tool_calls:
             result.ok = True

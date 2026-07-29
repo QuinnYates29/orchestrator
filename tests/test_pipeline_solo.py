@@ -153,3 +153,41 @@ def test_residency_stops_after_successful_profile_load():
     client = FakeClient([])
     _run(ensure_model_resident(client, "ds4-full"))
     assert client.loads == [("ds4", "ds4-full")]
+
+
+def test_empty_turn_is_nudged_not_reported_as_finished(tmp_path):
+    """Ornith reasons at length and then returns an empty message. Treating
+    that as a finished task reports a phase complete having written nothing."""
+    (tmp_path / "a.txt").write_text("hello")
+    client = FakeClient([
+        ("", None, None),                                             # empty
+        ("", [{"id": "c1", "name": "read_file",
+               "arguments": {"path": "a.txt"}}], None),               # recovers
+        ("done", None, None),
+    ])
+    result = _run(run_solo(client, model="ornith", repo=tmp_path, task="read a.txt"))
+    assert result.ok
+    assert result.stop_reason == "finished"
+    assert result.tool_calls == 1
+    nudged = [m for m in result.messages
+              if m["role"] == "user" and "empty" in (m["content"] or "")]
+    assert len(nudged) == 1
+    assert not any(m["role"] == "assistant" and not m.get("content")
+                   and not m.get("tool_calls") for m in result.messages)
+
+
+def test_persistent_empty_turns_fail_rather_than_claim_success(tmp_path):
+    client = FakeClient([("", None, None)] * 4)
+    result = _run(run_solo(client, model="ornith", repo=tmp_path,
+                           task="x", max_empty_retries=2))
+    assert not result.ok
+    assert result.stop_reason == "empty_response"
+    assert "empty responses" in result.final_message
+
+
+def test_whitespace_only_content_counts_as_empty(tmp_path):
+    client = FakeClient([("   \n  ", None, None)] * 4)
+    result = _run(run_solo(client, model="ornith", repo=tmp_path,
+                           task="x", max_empty_retries=1))
+    assert not result.ok
+    assert result.stop_reason == "empty_response"

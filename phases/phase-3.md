@@ -96,17 +96,20 @@ the limit).
 
 ## Environment — read this before running anything
 
-There is no `python` on PATH. The interpreter with the test dependencies is:
+You are already in the repository you are working on:
+`/home/quinna/tools/orchestrator-impl`. **Never `cd` somewhere else.** All your
+files are here and only here.
 
-```
-/home/quinna/tools/orchestrator/.venv/bin/python
-```
-
-Run the suite with exactly:
+There is no `python` on PATH. The interpreter lives in a *different* directory
+than the repo — that is only where the dependencies happen to be installed, it
+is NOT the code you are editing. Run the suite from where you already are:
 
 ```
 /home/quinna/tools/orchestrator/.venv/bin/python -m pytest tests/ -q
 ```
+
+If a file you just wrote appears to be missing, you have `cd`'d out of the repo.
+Run `pwd` and come back — do not re-create the file.
 
 `pytest-asyncio` is **not installed** and will not be installed. Do not write
 bare `async def test_*` — pytest cannot run them and reports them as failures.
