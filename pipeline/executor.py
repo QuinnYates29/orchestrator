@@ -37,6 +37,19 @@ from .workspace import create_agent_workspace
 
 log = logging.getLogger("pipeline.executor")
 
+STATE_PATH = "state.json"
+
+
+def _save_run_state(config: "RunConfig", plan: "Plan", outcomes: list["ChunkOutcome"],
+                    base_commit: str, task: str = "", repo: Path | None = None) -> None:
+    """Persist state atomically, swallowing any error so it can't take down the run."""
+    state_path = config.resolved_scratch_dir() / config.run_id / STATE_PATH
+    try:
+        save_state(state_path, config.run_id, task or config.task,
+                   repo or config.repo, plan, outcomes, base_commit)
+    except Exception:
+        log.exception("failed to persist state for run %s", config.run_id)
+
 
 # ---------------------------------------------------------------------------
 # Pure graph logic
@@ -304,6 +317,9 @@ async def execute_plan(
 
     chunk_order = {c.id: i for i, c in enumerate(plan.chunks)}
 
+    # Persist state after every transition — a run that dies is the one we
+    # need the state for. Never take down the run because state persistence
+    # failed.
     for wave in waves:
         # Decide which chunks in this wave can actually run.
         ready: list[PlanChunk] = []
@@ -319,6 +335,7 @@ async def execute_plan(
                 outcomes.append(outcome)
                 events.emit("chunk_skipped", chunk=chunk.id,
                             reason=f"dependency {failed_dep!r} failed")
+                _save_run_state(config, plan, outcomes, base_commit)
                 # If downstream chunks depend on this one, mark them
                 # skipped too (they'll be caught in their own wave).
                 # We also propagate: any chunk that depends on this
@@ -385,6 +402,8 @@ async def execute_plan(
                     if new_head:
                         effective_base[chunk.id] = new_head
 
+                _save_run_state(config, plan, outcomes, base_commit)
+
     supervisor_task.cancel()
     try:
         await supervisor_task
@@ -393,14 +412,5 @@ async def execute_plan(
 
     # Sort outcomes in planner order.
     outcomes.sort(key=lambda o: chunk_order[o.chunk.id])
-
-    # Persist state after every transition — a run that dies is the one we
-    # need the state for. Never take down the run because state persistence
-    # failed.
-    state_path = config.resolved_scratch_dir() / config.run_id / STATE_PATH
-    try:
-        save_state(state_path, config.run_id, "", plan, outcomes, base_commit)
-    except Exception:
-        log.exception("failed to persist state for run %s", config.run_id)
 
     return outcomes
