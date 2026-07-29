@@ -111,7 +111,10 @@ async def merge(
     waves = topological_waves(plan.chunks)
     topo_ids: list[str] = []
     for wave in waves:
-        topo_ids.extend(wave)  # wave is already list[str] of chunk ids
+        # topological_waves yields PlanChunk objects, not ids. PlanChunk is an
+        # unhashable dataclass, so extending with the objects makes every
+        # outcome_by_id lookup below a TypeError.
+        topo_ids.extend(c.id for c in wave)
 
     # Build a map of id -> outcome.
     outcome_by_id: dict[str, ChunkOutcome] = {}
