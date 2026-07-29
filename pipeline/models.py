@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from .config import VerifyCfg
+from .config import LimitsCfg, VerifyCfg
 from .verify import VerifyResult
 
 
@@ -27,6 +27,7 @@ class RunConfig:
     max_agent_turns: int = 60                # hard ceiling on tool-call turns per agent (belt-and-suspenders)
     keep_scratch: bool = True                # per-agent clones are the audit trail; keep by default
     run_id: str = field(default_factory=lambda: time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    limits: LimitsCfg = field(default_factory=LimitsCfg)
     # Which fleet model plays each role, from config.yaml's `pipeline.roles`.
     # Defaults kept here so a RunConfig built by hand (tests, embedding callers)
     # still works without loading a config file.

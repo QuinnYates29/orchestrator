@@ -81,7 +81,7 @@ def topological_waves(chunks: list[PlanChunk]) -> list[list[PlanChunk]]:
         for dep in c.depends_on:
             dependents[dep].append(c.id)
 
-    order = {cid: i for i, cid in enumerate(chunks)}
+    order = {c.id: i for i, c in enumerate(chunks)}
     waves: list[list[str]] = []
     queue: deque[str] = deque()
     # Initial wave: chunks with no dependencies, in planner order.
@@ -112,12 +112,12 @@ def topological_waves(chunks: list[PlanChunk]) -> list[list[PlanChunk]]:
             queue.append(cid)
 
     if processed != total:
-        cycle_members = [by_id[cid] for cid in chunks if cid in remaining_deps]
+        cycle_chunks = [c for c in chunks if remaining_deps[c.id]]
         raise ValueError(
             f"cycle detected among chunks: "
-            f"{', '.join(c.id for c in cycle_members)}")
+            f"{', '.join(c.id for c in cycle_chunks)}")
 
-    return [list(wave) for wave in waves]
+    return [[by_id[cid] for cid in wave] for wave in waves]
 
 
 # ---------------------------------------------------------------------------
