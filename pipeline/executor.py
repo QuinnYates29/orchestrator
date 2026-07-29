@@ -232,6 +232,11 @@ async def _integrate_chunk(
     if code != 0:
         log.warning("merge conflict integrating chunk %s: %s", chunk.id, err.strip())
         events.emit("merge_conflict", chunk=chunk.id, reason=err.strip())
+        # Leave the integration repo usable. Without this the conflict markers
+        # stay staged and every later chunk fails with "Merging is not
+        # possible because you have unmerged files" - one real conflict was
+        # turning into a cascade of fake ones.
+        await run_argv(["git", "merge", "--abort"], cwd=integration_path)
         return None
 
     _, new_head, _ = await run_argv(["git", "rev-parse", "HEAD"], cwd=integration_path)

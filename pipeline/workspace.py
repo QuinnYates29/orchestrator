@@ -9,10 +9,13 @@ since git auto-hardlinks the object store for same-filesystem local clones.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from ._procutil import run_argv
 from .models import PlanChunk, RunConfig
+
+log = logging.getLogger("pipeline.workspace")
 
 
 async def capture_base_commit(repo: Path) -> str:
@@ -40,7 +43,36 @@ async def create_agent_workspace(config: RunConfig, chunk: PlanChunk, attempt: i
     if code != 0:
         raise RuntimeError(f"git checkout failed for {chunk.id} attempt {attempt}: {err.strip()}")
 
+    _write_workspace_excludes(dest)
     return dest, branch
+
+
+# Build artifacts an agent generates by *running* the code it is writing.
+# finalize_agent_commit does `git add -A`, so without this every agent that
+# runs pytest commits its own .pyc files - and two chunks that both import the
+# same module each commit their own binary copy of that module's .pyc, which
+# conflicts on merge every single time. Written to .git/info/exclude rather
+# than a .gitignore so the agent's diff stays free of files it did not author.
+_WORKSPACE_EXCLUDES = """\
+# Written by pipeline.workspace: artifacts from running the code under test.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+*.egg-info/
+"""
+
+
+def _write_workspace_excludes(workspace: Path) -> None:
+    exclude = workspace / ".git" / "info" / "exclude"
+    try:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        existing = exclude.read_text() if exclude.exists() else ""
+        exclude.write_text(existing + "\n" + _WORKSPACE_EXCLUDES)
+    except OSError as e:  # never fail a run over a hygiene nicety
+        log.warning("could not write %s: %s", exclude, e)
 
 
 async def finalize_agent_commit(workspace: Path, message: str) -> str:
