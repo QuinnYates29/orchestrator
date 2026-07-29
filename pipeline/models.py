@@ -54,6 +54,7 @@ class PlanChunk:
     description: str
     scope: list[str] = field(default_factory=list)   # files/dirs this chunk is expected to touch
     context: str = ""                                  # anything not obvious from the repo itself
+    depends_on: list[str] = field(default_factory=list)  # chunk ids that must complete before this one
 
 
 @dataclass
@@ -70,6 +71,7 @@ class AgentStatus(str, Enum):
     TIMED_OUT = "timed_out"     # run_shell dead-man's-switch fired
     FAILED = "failed"           # terminal - retry exhausted, or a non-recoverable error
     VERIFY_FAILED = "verify_failed"  # agent exhausted repair attempts without passing verification
+    SKIPPED = "skipped"              # chunk's dependency failed / could not be integrated
 
 
 @dataclass

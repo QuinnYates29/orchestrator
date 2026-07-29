@@ -20,14 +20,13 @@ from pathlib import Path
 from . import config as pipeline_config
 from .client import OrchestratorClient
 from .events import EventLog
+from .executor import execute_plan
 from .merger import merge
 from .models import AgentState, AgentStatus, ChunkOutcome, RunConfig, RunReport
 from .explore import explore_session
 from .planner import create_plan
 from .solo import solo_session
-from .supervisor import supervise
-from .worker import build_initial_messages, run_agent
-from .workspace import capture_base_commit, cleanup_workspace, create_agent_workspace
+from .workspace import capture_base_commit, cleanup_workspace
 
 log = logging.getLogger("pipeline.cli")
 

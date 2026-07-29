@@ -97,7 +97,7 @@ the limit).
 ## Environment — read this before running anything
 
 You are already in the repository you are working on:
-`/home/quinna/tools/orchestrator-impl`. **Never `cd` somewhere else.** All your
+`/home/quinna/tools/orchestrator-p3`. **Never `cd` somewhere else.** All your
 files are here and only here.
 
 There is no `python` on PATH. The interpreter lives in a *different* directory
