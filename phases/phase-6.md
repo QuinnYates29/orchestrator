@@ -90,6 +90,37 @@ tolerates a directory with no `state.json`; resume selection logic picks exactly
 the non-COMPLETED chunks; a SKIPPED chunk whose dependency is now COMPLETED is
 selected; token totals surface unreported calls.
 
+## Environment — read this before running anything
+
+There is no `python` on PATH. The interpreter with the test dependencies is:
+
+```
+/home/quinna/tools/orchestrator/.venv/bin/python
+```
+
+Run the suite with exactly:
+
+```
+/home/quinna/tools/orchestrator/.venv/bin/python -m pytest tests/ -q
+```
+
+`pytest-asyncio` is **not installed** and will not be installed. Do not write
+bare `async def test_*` — pytest cannot run them and reports them as failures.
+The repo convention, in `tests/test_pipeline_solo.py`, is a synchronous test
+that drives the coroutine itself:
+
+```python
+def _run(coro):
+    return asyncio.run(coro)
+
+def test_something():
+    result = _run(some_async_fn(...))
+```
+
+You have a 60-turn budget and each turn is slow. Do not spend turns guessing at
+the environment. Call `submit_work` as soon as the suite is green — running out
+of turns loses the summary.
+
 ## Definition of done
 
 `python -m pytest tests/ -q` fully green, then summarize.
