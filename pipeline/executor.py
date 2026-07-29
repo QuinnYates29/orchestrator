@@ -290,12 +290,21 @@ async def execute_plan(
     *,
     load_wait_s: float,
     base_commit: str,
+    completed_outcomes: dict[str, ChunkOutcome] | None = None,
 ) -> list[ChunkOutcome]:
     """Run ``plan`` wave by wave, bounded by ``max_concurrent_workers``.
 
     Returns the full list of ``ChunkOutcome`` — completed, failed, and
     skipped — in planner order, never silently dropping SKIPPED chunks.
+
+    ``completed_outcomes`` maps chunk id -> outcome for chunks a previous run
+    already finished. Those are carried through untouched rather than re-run,
+    which is the whole point of ``pipeline resume``: their work is already in
+    their clone and re-running would discard it. They still count as satisfied
+    dependencies, so a SKIPPED chunk whose dependency has since completed
+    becomes runnable again.
     """
+    completed_outcomes = completed_outcomes or {}
     waves = topological_waves(plan.chunks)
     semaphore = asyncio.Semaphore(config.limits.max_concurrent_workers)
 
@@ -309,6 +318,16 @@ async def execute_plan(
 
     outcomes_by_id: dict[str, ChunkOutcome] = {}
     outcomes: list[ChunkOutcome] = []
+
+    # Seed with work a previous run already finished. Doing this before the
+    # wave loop means _find_failed_dep sees them as satisfied dependencies,
+    # so downstream chunks that were SKIPPED last time can run now.
+    for chunk in plan.chunks:
+        prior = completed_outcomes.get(chunk.id)
+        if prior is not None:
+            outcomes_by_id[chunk.id] = prior
+            outcomes.append(prior)
+            events.emit("chunk_reused", chunk=chunk.id, status=prior.status.value)
 
     # --- Supervisor covers the *entire* execution phase across all waves.
     agents: dict[str, tuple[AgentState, asyncio.Task]] = {}
@@ -324,6 +343,8 @@ async def execute_plan(
         # Decide which chunks in this wave can actually run.
         ready: list[PlanChunk] = []
         for chunk in wave:
+            if chunk.id in completed_outcomes:
+                continue  # already done by the run being resumed
             failed_dep = _find_failed_dep(chunk, outcomes_by_id)
             if failed_dep:
                 outcome = _skipped_outcome(

@@ -27,7 +27,7 @@ from .merger import merge
 from .models import AgentStatus, ChunkOutcome, Plan, RunConfig, RunReport
 from .explore import explore_session
 from .planner import create_plan
-from .solo import solo_session
+from .solo import ensure_model_resident, solo_session
 from .state import RunState, RunSummary, find_runs, load_state, save_state
 from .workspace import capture_base_commit, cleanup_workspace
 
@@ -83,6 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Baseline periodic supervisor review cadence.")
     run_p.add_argument("--no-keep-scratch", action="store_true",
                        help="Delete per-agent clones after the run. Default: keep them as the audit trail.")
+    run_p.add_argument("--no-load", action="store_true",
+                       help="Skip the /admin/load residency checks (the backend is already up). "
+                            "Required when pointing --orchestrator-url straight at a llama-server "
+                            "rather than at the routing proxy.")
 
     solo_p = sub.add_parser(
         "solo", help="Run a single agent directly in one working directory.",
@@ -205,6 +209,7 @@ def _build_run_config(args, pcfg) -> RunConfig:
         fast_repetition_tick_s=getattr(args, "fast_tick_s", 3.0),
         review_tick_s=getattr(args, "review_tick_s", 30.0),
         max_agent_turns=args.max_agent_turns or pcfg.limits.max_agent_turns,
+        max_tokens=args.max_tokens,
         keep_scratch=not getattr(args, "no_keep_scratch", False),
         roles=pcfg.roles.as_dict(),
     )
@@ -212,27 +217,59 @@ def _build_run_config(args, pcfg) -> RunConfig:
 
 # -- run: fan-out/merge -------------------------------------------------
 
-async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog) -> RunReport:
-    roles = config.roles
-    async with OrchestratorClient(config.orchestrator_url, config.admin_url, config.api_key) as client:
-        log.info("run %s: loading %s to plan", config.run_id, roles["planner"])
-        events.emit("run_start", repo=str(config.repo), roles=roles, task=config.task[:500])
-        await client.admin_load("ds4", profile=roles["planner"], wait_s=load_wait_s)
-        plan = await create_plan(client, config)
-        events.emit("plan", chunks=[{"id": c.id, "title": c.title} for c in plan.chunks])
+async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog,
+                       ensure_resident: bool = True,
+                       plan: Plan | None = None,
+                       base_commit: str | None = None,
+                       existing_outcomes: list[ChunkOutcome] | None = None,
+                       max_attempts: int | None = None) -> RunReport:
+    """Plan, fan out, merge.
 
-        base_commit = await capture_base_commit(config.repo)
+    `resume` supplies `plan`, `base_commit` and `existing_outcomes` from a
+    saved run, in which case the planner is skipped entirely and only the
+    not-yet-COMPLETED chunks are re-executed.
+    """
+    roles = config.roles
+    resuming = plan is not None
+    async with OrchestratorClient(config.orchestrator_url, config.admin_url, config.api_key) as client:
+        if resuming:
+            log.info("run %s: resuming with the stored plan (%d chunks)",
+                     config.run_id, len(plan.chunks))
+            events.emit("run_start", repo=str(config.repo), roles=roles,
+                        task=config.task[:500], resumed=True)
+        else:
+            log.info("run %s: loading %s to plan", config.run_id, roles["planner"])
+            events.emit("run_start", repo=str(config.repo), roles=roles, task=config.task[:500])
+            # Roles became configurable in phase 0, but this call still hardcoded
+            # "ds4" and passed the role's *model* as a profile - so `planner:
+            # ornith` asked to load ds4 with a profile named "ornith".
+            # ensure_model_resident resolves profile-vs-backend properly.
+            if ensure_resident:
+                await ensure_model_resident(client, roles["planner"], load_wait_s)
+            plan = await create_plan(client, config)
+            events.emit("plan", chunks=[{"id": c.id, "title": c.title} for c in plan.chunks])
+
+        if base_commit is None:
+            base_commit = await capture_base_commit(config.repo)
         log.info("preparing %d agent workspace(s) from %s", len(plan.chunks), base_commit[:10])
+
+        done = {o.chunk.id: o for o in (existing_outcomes or [])
+                if o.status == AgentStatus.COMPLETED}
+        if done:
+            log.info("resume: %d chunk(s) already completed, re-running %d",
+                     len(done), len(plan.chunks) - len(done))
 
         outcomes = await execute_plan(
             client, config, plan, events,
             load_wait_s=load_wait_s, base_commit=base_commit,
+            completed_outcomes=done or None,
         )
 
         succeeded = sum(1 for o in outcomes if o.status == AgentStatus.COMPLETED)
         log.info("execution phase done: %d/%d succeeded - loading %s to merge",
                  succeeded, len(outcomes), roles["merger"])
-        await client.admin_load("ds4", profile=roles["merger"], wait_s=load_wait_s)
+        if ensure_resident:
+            await ensure_model_resident(client, roles["merger"], load_wait_s)
         merge_commit, merge_summary = await merge(client, config, plan, outcomes, base_commit)
         events.emit("run_end", succeeded=succeeded, total=len(outcomes), merge_commit=merge_commit)
 
@@ -296,7 +333,8 @@ def _cmd_run(args, pcfg) -> int:
     config = _build_run_config(args, pcfg)
     events = EventLog.for_run(config.resolved_scratch_dir(), config.run_id)
     print(f"run {config.run_id}: events at {events.path}", file=sys.stderr)
-    report = asyncio.run(run_pipeline(config, args.load_wait_s, events))
+    report = asyncio.run(run_pipeline(config, args.load_wait_s, events,
+                                      ensure_resident=not args.no_load))
     _print_report(report)
     return 0 if not report.failed else 1
 

@@ -100,7 +100,7 @@ async def run_agent(client: OrchestratorClient, config: RunConfig, plan: Plan, s
 
             async for event in client.chat_stream(
                 config.model_for("worker"), state.messages, tools=TOOL_SCHEMAS + [SUBMIT_WORK_TOOL],
-                tool_choice="auto", max_tokens=8192,
+                tool_choice="auto", max_tokens=config.max_tokens,
             ):
                 if event.reasoning_delta:
                     state.reasoning_buffer += event.reasoning_delta

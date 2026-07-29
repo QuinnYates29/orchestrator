@@ -303,7 +303,7 @@ async def _resolve_escalation(
         )
         completion = await client.chat_once(
             config.model_for("merger"), messages, tools=tools,
-            tool_choice=tool_choice, max_tokens=8192,
+            tool_choice=tool_choice, max_tokens=config.max_tokens,
         )
         message = completion["choices"][0]["message"]
         messages.append(message)

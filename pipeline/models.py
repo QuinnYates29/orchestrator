@@ -25,6 +25,10 @@ class RunConfig:
     fast_repetition_tick_s: float = 3.0      # mechanical duplicate-text check cadence
     review_tick_s: float = 30.0              # baseline periodic ds4-light review cadence
     max_agent_turns: int = 60                # hard ceiling on tool-call turns per agent (belt-and-suspenders)
+    # Per-turn generation cap for every role. The planner's was hardcoded to
+    # 4096, which a verbose reasoner exhausts before finishing its submit_plan
+    # tool call - yielding truncated JSON rather than a plan.
+    max_tokens: int = 8192
     keep_scratch: bool = True                # per-agent clones are the audit trail; keep by default
     run_id: str = field(default_factory=lambda: time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
     limits: LimitsCfg = field(default_factory=LimitsCfg)

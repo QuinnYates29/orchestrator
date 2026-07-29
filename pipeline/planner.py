@@ -99,7 +99,7 @@ async def create_plan(client: OrchestratorClient, config: RunConfig) -> Plan:
         )
         completion = await client.chat_once(
             config.model_for("planner"), messages, tools=tools,
-            tool_choice=tool_choice, max_tokens=4096,
+            tool_choice=tool_choice, max_tokens=config.max_tokens,
         )
         message = completion["choices"][0]["message"]
         messages.append(message)
@@ -132,10 +132,25 @@ async def create_plan(client: OrchestratorClient, config: RunConfig) -> Plan:
 
 def _parse_plan(raw_arguments) -> Plan:
     import json
-    args = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+    if isinstance(raw_arguments, str):
+        try:
+            args = json.loads(raw_arguments)
+        except json.JSONDecodeError as e:
+            # Almost always the generation cap: the model runs out of budget
+            # partway through the submit_plan arguments and the JSON ends
+            # mid-string. A bare JSONDecodeError points at the parser rather
+            # than at the cause, so say what actually happened.
+            raise RuntimeError(
+                f"the planner's submit_plan arguments were not valid JSON ({e}). "
+                f"The arguments were {len(raw_arguments)} characters and most "
+                f"likely truncated by the per-turn generation cap - raise "
+                f"--max-tokens. First 200 chars: {raw_arguments[:200]!r}"
+            ) from e
+    else:
+        args = raw_arguments
     chunks_raw = args.get("chunks") or []
     if not chunks_raw:
-        raise RuntimeError("ds4-full submitted a plan with zero chunks")
+        raise RuntimeError("the planner submitted a plan with zero chunks")
     chunks = [
         PlanChunk(
             id=c["id"], title=c.get("title", c["id"]), description=c.get("description", ""),

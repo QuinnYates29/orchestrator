@@ -25,17 +25,17 @@ pipeline:
   # run can be re-pointed (e.g. everything at ornith for a cheap dry run)
   # without touching code.
   roles:
-    planner: ds4-full
+    planner: ornith
     worker: ornith
-    supervisor: ds4-light
-    merger: ds4-full
+    supervisor: ornith
+    merger: ornith
     explorer: ornith
 
   verify:
     # Shell command proving a chunk's work is good, run inside that agent's own
     # clone. null means "no verification configured" — which is reported as
     # skipped, never as passing. Override per-run with --verify-command.
-    command: null
+    command: python3 -m pytest tests/ -q
     timeout_s: 600
     # How many times a failing agent gets the verify output fed back into the
     # SAME conversation before giving up. This is the cheap repair path; the
