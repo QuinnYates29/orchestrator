@@ -20,14 +20,13 @@ from pathlib import Path
 from . import config as pipeline_config
 from .client import OrchestratorClient
 from .events import EventLog
+from .executor import execute_plan
 from .merger import merge
-from .models import AgentState, AgentStatus, ChunkOutcome, RunConfig, RunReport
+from .models import ChunkOutcome, RunConfig, RunReport
 from .explore import explore_session
 from .planner import create_plan
 from .solo import solo_session
-from .supervisor import supervise
-from .worker import build_initial_messages, run_agent
-from .workspace import capture_base_commit, cleanup_workspace, create_agent_workspace
+from .workspace import capture_base_commit, cleanup_workspace
 
 log = logging.getLogger("pipeline.cli")
 
@@ -177,71 +176,10 @@ async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog) 
         base_commit = await capture_base_commit(config.repo)
         log.info("preparing %d agent workspace(s) from %s", len(plan.chunks), base_commit[:10])
 
-        agents: dict[str, tuple[AgentState, asyncio.Task]] = {}
-        for chunk in plan.chunks:
-            ws, branch = await create_agent_workspace(config, chunk, 1, base_commit)
-            state = AgentState(chunk=chunk, attempt=1, workspace=ws, branch=branch, base_commit=base_commit)
-            state.messages = build_initial_messages(chunk, plan)
-            task = asyncio.create_task(run_agent(client, config, plan, state), name=state.label)
-            agents[chunk.id] = (state, task)
-
-        log.info("loading %s + %s for parallel execution", roles["supervisor"], roles["worker"])
-        await asyncio.gather(
-            client.admin_load("ds4", profile=roles["supervisor"], wait_s=load_wait_s),
-            client.admin_load(roles["worker"], wait_s=load_wait_s),
+        outcomes = await execute_plan(
+            client, config, plan, events,
+            load_wait_s=load_wait_s, base_commit=base_commit,
         )
-
-        supervisor_task = asyncio.create_task(supervise(client, config, agents), name="supervisor")
-
-        outcomes: list[ChunkOutcome] = []
-        pending = dict(agents)
-        while pending:
-            done, _ = await asyncio.wait([t for _, t in pending.values()],
-                                          return_when=asyncio.FIRST_COMPLETED)
-            for chunk_id in list(pending):
-                state, task = pending[chunk_id]
-                if task not in done:
-                    continue
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    log.exception("agent %s crashed unexpectedly", state.label)
-                    if state.status == AgentStatus.RUNNING:
-                        state.status = AgentStatus.FAILED
-                        state.kill_reason = state.kill_reason or "unexpected crash - see logs"
-
-                events.emit("chunk_finished", chunk=chunk_id, status=state.status.value,
-                            attempt=state.attempt, turns=state.turns, kill_reason=state.kill_reason)
-
-                if state.status in (AgentStatus.KILLED, AgentStatus.TIMED_OUT) and state.attempt == 1:
-                    log.info("retrying %s (attempt 2) after %s: %s",
-                             chunk_id, state.status.value, state.kill_reason)
-                    retry_ws, retry_branch = await create_agent_workspace(
-                        config, state.chunk, 2, base_commit)
-                    retry_state = AgentState(chunk=state.chunk, attempt=2, workspace=retry_ws,
-                                             branch=retry_branch, base_commit=base_commit)
-                    retry_context = (f"A previous attempt at this chunk was stopped: {state.kill_reason}. "
-                                     "Avoid repeating whatever caused that.")
-                    retry_state.messages = build_initial_messages(state.chunk, plan, retry_context)
-                    retry_task = asyncio.create_task(
-                        run_agent(client, config, plan, retry_state), name=retry_state.label,
-                    )
-                    pending[chunk_id] = (retry_state, retry_task)
-                    agents[chunk_id] = (retry_state, retry_task)
-                else:
-                    outcomes.append(ChunkOutcome(
-                        chunk=state.chunk, status=state.status, workspace=state.workspace,
-                        kill_reason=state.kill_reason, attempts=state.attempt,
-                    ))
-                    del pending[chunk_id]
-
-        supervisor_task.cancel()
-        try:
-            await supervisor_task
-        except asyncio.CancelledError:
-            pass
 
         succeeded = sum(1 for o in outcomes if o.status == AgentStatus.COMPLETED)
         log.info("execution phase done: %d/%d succeeded - loading %s to merge",

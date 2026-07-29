@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from .config import VerifyCfg
+from .config import LimitsCfg, VerifyCfg
 from .verify import VerifyResult
 
 
@@ -27,6 +27,7 @@ class RunConfig:
     max_agent_turns: int = 60                # hard ceiling on tool-call turns per agent (belt-and-suspenders)
     keep_scratch: bool = True                # per-agent clones are the audit trail; keep by default
     run_id: str = field(default_factory=lambda: time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    limits: LimitsCfg = field(default_factory=LimitsCfg)
     # Which fleet model plays each role, from config.yaml's `pipeline.roles`.
     # Defaults kept here so a RunConfig built by hand (tests, embedding callers)
     # still works without loading a config file.
@@ -54,6 +55,7 @@ class PlanChunk:
     description: str
     scope: list[str] = field(default_factory=list)   # files/dirs this chunk is expected to touch
     context: str = ""                                  # anything not obvious from the repo itself
+    depends_on: list[str] = field(default_factory=list)  # chunk ids that must complete before this one
 
 
 @dataclass
@@ -70,6 +72,7 @@ class AgentStatus(str, Enum):
     TIMED_OUT = "timed_out"     # run_shell dead-man's-switch fired
     FAILED = "failed"           # terminal - retry exhausted, or a non-recoverable error
     VERIFY_FAILED = "verify_failed"  # agent exhausted repair attempts without passing verification
+    SKIPPED = "skipped"              # chunk's dependency failed / could not be integrated
 
 
 @dataclass
