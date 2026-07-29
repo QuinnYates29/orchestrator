@@ -1,8 +1,11 @@
-"""Entrypoint: python -m pipeline.cli --repo PATH --task "..."
+"""Entrypoint for the pipeline's workflows.
 
-Sequences: plan (ds4-full) -> prepare per-agent git clones -> swap to
-ds4-light + ornith -> parallel execute under supervision (with one retry per
-chunk on kill/timeout) -> swap back to ds4-full -> merge -> report.
+    pipeline run   --repo PATH --task "..."    fan-out/merge (plan -> N agents -> merge)
+    pipeline solo  --repo PATH --task "..."    single agent, one working directory
+
+Later phases add `explore`, `resume`, and `runs`. `run` keeps every flag it had
+before the subcommand split, so existing invocations work by inserting the word
+`run`.
 """
 from __future__ import annotations
 
@@ -13,10 +16,13 @@ import os
 import sys
 from pathlib import Path
 
+from . import config as pipeline_config
 from .client import OrchestratorClient
+from .events import EventLog
 from .merger import merge
 from .models import AgentState, AgentStatus, ChunkOutcome, RunConfig, RunReport
 from .planner import create_plan
+from .solo import solo_session
 from .supervisor import supervise
 from .worker import build_initial_messages, run_agent
 from .workspace import capture_base_commit, cleanup_workspace, create_agent_workspace
@@ -24,59 +30,104 @@ from .workspace import capture_base_commit, cleanup_workspace, create_agent_work
 log = logging.getLogger("pipeline.cli")
 
 
-def parse_args(argv=None) -> tuple[RunConfig, float]:
-    p = argparse.ArgumentParser(
-        description="Multi-agent implementation pipeline: ds4-full plans, N Ornith agents implement "
-                    "chunks in parallel under ds4-light supervision, ds4-full reviews and merges.",
-    )
+def _add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--repo", type=Path, default=Path.cwd(),
-                   help="Target repository root. Defaults to the current directory. Must be a git repo.")
+                   help="Target repository root. Defaults to the current directory.")
     task_group = p.add_mutually_exclusive_group(required=True)
     task_group.add_argument("--task", help="Free-text description of what to implement.")
     task_group.add_argument("--task-file", type=Path, help="Read the task description from a file.")
-    p.add_argument("--agents-max", type=int, default=None,
-                   help="Soft upper bound on chunk count passed to the planner - it may choose fewer.")
     p.add_argument("--orchestrator-url", default="http://127.0.0.1:8080/v1")
     p.add_argument("--admin-url", default="http://127.0.0.1:8080")
     p.add_argument("--api-key", default=os.environ.get("ORCHESTRATOR_API_KEY"))
+    p.add_argument("--config", type=Path, default=None,
+                   help="Path to config.yaml holding the `pipeline:` block. Defaults to the one "
+                        "next to the package.")
     p.add_argument("--scratch-dir", type=Path, default=None,
-                   help="Where per-agent clones live. Defaults to <repo>/.pipeline-runs.")
+                   help="Where run artifacts (event log, agent clones) live. Defaults to "
+                        "<repo>/.pipeline-runs.")
     p.add_argument("--load-wait-s", type=float, default=180.0,
                    help="How long each /admin/load call blocks waiting for a model to become resident.")
     p.add_argument("--run-shell-timeout-s", type=float, default=900.0,
                    help="Dead-man's-switch on a single run_shell call (default 15min).")
-    p.add_argument("--fast-tick-s", type=float, default=3.0,
-                   help="Mechanical repetition-check cadence.")
-    p.add_argument("--review-tick-s", type=float, default=30.0,
-                   help="Baseline periodic ds4-light review cadence.")
-    p.add_argument("--max-agent-turns", type=int, default=60,
-                   help="Hard ceiling on tool-call turns per agent (belt-and-suspenders, distinct from "
-                       "ds4-light's judgment-based kill).")
-    p.add_argument("--no-keep-scratch", action="store_true",
-                   help="Delete per-agent clones after the run. Default: keep them, they're the audit trail.")
-    args = p.parse_args(argv)
+    p.add_argument("--max-agent-turns", type=int, default=None,
+                   help="Override pipeline.limits.max_agent_turns from config.yaml.")
 
-    repo = args.repo.resolve()
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="pipeline",
+        description="Multi-agent implementation workflows over the local model fleet.",
+    )
+    sub = p.add_subparsers(dest="command", required=True)
+
+    run_p = sub.add_parser(
+        "run", help="Plan, fan out N agents in parallel isolated clones, then merge.",
+        description="The planner splits the task, N worker agents implement chunks in parallel under "
+                    "supervision, and the merger reviews and integrates the result.",
+    )
+    _add_common_args(run_p)
+    run_p.add_argument("--agents-max", type=int, default=None,
+                       help="Soft upper bound on chunk count passed to the planner - it may choose fewer.")
+    run_p.add_argument("--fast-tick-s", type=float, default=3.0,
+                       help="Mechanical repetition-check cadence.")
+    run_p.add_argument("--review-tick-s", type=float, default=30.0,
+                       help="Baseline periodic supervisor review cadence.")
+    run_p.add_argument("--no-keep-scratch", action="store_true",
+                       help="Delete per-agent clones after the run. Default: keep them as the audit trail.")
+
+    solo_p = sub.add_parser(
+        "solo", help="Run a single agent directly in one working directory.",
+        description="One model, one working directory, no clones and no supervisor. The workspace is "
+                    "edited in place - point it at a scratch clone, not a repo you care about.",
+    )
+    _add_common_args(solo_p)
+    solo_p.add_argument("--model", default=None,
+                        help="Model or launch profile to drive. Defaults to pipeline.roles.planner "
+                             "from config.yaml.")
+    solo_p.add_argument("--no-load", action="store_true",
+                        help="Skip the /admin/load residency check (the backend is already up).")
+    return p
+
+
+def _read_task(args) -> str:
+    if args.task is not None:
+        return args.task
+    if not args.task_file.exists():
+        raise SystemExit(f"task file not found: {args.task_file}")
+    return args.task_file.read_text()
+
+
+def _require_git_repo(repo: Path) -> None:
     if not (repo / ".git").exists():
         raise SystemExit(f"{repo} is not a git repository (no .git found) - "
-                         "this pipeline requires git for per-agent isolation.")
+                         "this workflow requires git for per-agent isolation.")
 
-    task = args.task if args.task is not None else args.task_file.read_text()
-    config = RunConfig(
-        repo=repo, task=task, orchestrator_url=args.orchestrator_url, admin_url=args.admin_url,
-        api_key=args.api_key, scratch_dir=args.scratch_dir, max_agents=args.agents_max,
-        run_shell_timeout_s=args.run_shell_timeout_s, fast_repetition_tick_s=args.fast_tick_s,
-        review_tick_s=args.review_tick_s, max_agent_turns=args.max_agent_turns,
-        keep_scratch=not args.no_keep_scratch,
+
+def _build_run_config(args, pcfg) -> RunConfig:
+    return RunConfig(
+        repo=args.repo.resolve(), task=_read_task(args),
+        orchestrator_url=args.orchestrator_url, admin_url=args.admin_url,
+        api_key=args.api_key, scratch_dir=args.scratch_dir,
+        max_agents=getattr(args, "agents_max", None),
+        run_shell_timeout_s=args.run_shell_timeout_s,
+        fast_repetition_tick_s=getattr(args, "fast_tick_s", 3.0),
+        review_tick_s=getattr(args, "review_tick_s", 30.0),
+        max_agent_turns=args.max_agent_turns or pcfg.limits.max_agent_turns,
+        keep_scratch=not getattr(args, "no_keep_scratch", False),
+        roles=pcfg.roles.as_dict(),
     )
-    return config, args.load_wait_s
 
 
-async def run_pipeline(config: RunConfig, load_wait_s: float) -> RunReport:
+# -- run: fan-out/merge -------------------------------------------------
+
+async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog) -> RunReport:
+    roles = config.roles
     async with OrchestratorClient(config.orchestrator_url, config.admin_url, config.api_key) as client:
-        log.info("run %s: loading ds4-full to plan", config.run_id)
-        await client.admin_load("ds4", profile="ds4-full", wait_s=load_wait_s)
+        log.info("run %s: loading %s to plan", config.run_id, roles["planner"])
+        events.emit("run_start", repo=str(config.repo), roles=roles, task=config.task[:500])
+        await client.admin_load("ds4", profile=roles["planner"], wait_s=load_wait_s)
         plan = await create_plan(client, config)
+        events.emit("plan", chunks=[{"id": c.id, "title": c.title} for c in plan.chunks])
 
         base_commit = await capture_base_commit(config.repo)
         log.info("preparing %d agent workspace(s) from %s", len(plan.chunks), base_commit[:10])
@@ -89,10 +140,10 @@ async def run_pipeline(config: RunConfig, load_wait_s: float) -> RunReport:
             task = asyncio.create_task(run_agent(client, config, plan, state), name=state.label)
             agents[chunk.id] = (state, task)
 
-        log.info("loading ds4-light + ornith for parallel execution")
+        log.info("loading %s + %s for parallel execution", roles["supervisor"], roles["worker"])
         await asyncio.gather(
-            client.admin_load("ds4", profile="ds4-light", wait_s=load_wait_s),
-            client.admin_load("ornith", wait_s=load_wait_s),
+            client.admin_load("ds4", profile=roles["supervisor"], wait_s=load_wait_s),
+            client.admin_load(roles["worker"], wait_s=load_wait_s),
         )
 
         supervisor_task = asyncio.create_task(supervise(client, config, agents), name="supervisor")
@@ -100,7 +151,8 @@ async def run_pipeline(config: RunConfig, load_wait_s: float) -> RunReport:
         outcomes: list[ChunkOutcome] = []
         pending = dict(agents)
         while pending:
-            done, _ = await asyncio.wait([t for _, t in pending.values()], return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait([t for _, t in pending.values()],
+                                          return_when=asyncio.FIRST_COMPLETED)
             for chunk_id in list(pending):
                 state, task = pending[chunk_id]
                 if task not in done:
@@ -115,10 +167,14 @@ async def run_pipeline(config: RunConfig, load_wait_s: float) -> RunReport:
                         state.status = AgentStatus.FAILED
                         state.kill_reason = state.kill_reason or "unexpected crash - see logs"
 
+                events.emit("chunk_finished", chunk=chunk_id, status=state.status.value,
+                            attempt=state.attempt, turns=state.turns, kill_reason=state.kill_reason)
+
                 if state.status in (AgentStatus.KILLED, AgentStatus.TIMED_OUT) and state.attempt == 1:
                     log.info("retrying %s (attempt 2) after %s: %s",
                              chunk_id, state.status.value, state.kill_reason)
-                    retry_ws, retry_branch = await create_agent_workspace(config, state.chunk, 2, base_commit)
+                    retry_ws, retry_branch = await create_agent_workspace(
+                        config, state.chunk, 2, base_commit)
                     retry_state = AgentState(chunk=state.chunk, attempt=2, workspace=retry_ws,
                                              branch=retry_branch, base_commit=base_commit)
                     retry_context = (f"A previous attempt at this chunk was stopped: {state.kill_reason}. "
@@ -143,10 +199,11 @@ async def run_pipeline(config: RunConfig, load_wait_s: float) -> RunReport:
             pass
 
         succeeded = sum(1 for o in outcomes if o.status == AgentStatus.COMPLETED)
-        log.info("execution phase done: %d/%d succeeded - loading ds4-full to merge",
-                 succeeded, len(outcomes))
-        await client.admin_load("ds4", profile="ds4-full", wait_s=load_wait_s)
+        log.info("execution phase done: %d/%d succeeded - loading %s to merge",
+                 succeeded, len(outcomes), roles["merger"])
+        await client.admin_load("ds4", profile=roles["merger"], wait_s=load_wait_s)
         merge_commit, merge_summary = await merge(client, config, plan, outcomes, base_commit)
+        events.emit("run_end", succeeded=succeeded, total=len(outcomes), merge_commit=merge_commit)
 
         if not config.keep_scratch:
             for outcome in outcomes:
@@ -161,7 +218,8 @@ def _print_report(report: RunReport) -> None:
     print(f"\n=== Run {report.run_id} ===")
     print(f"Plan: {len(report.plan.chunks)} chunk(s)")
     for outcome in report.outcomes:
-        line = f"  [{outcome.status.value}] {outcome.chunk.id}: {outcome.chunk.title} (attempts: {outcome.attempts})"
+        line = (f"  [{outcome.status.value}] {outcome.chunk.id}: {outcome.chunk.title} "
+                f"(attempts: {outcome.attempts})")
         if outcome.kill_reason:
             line += f" - {outcome.kill_reason}"
         print(line)
@@ -171,12 +229,53 @@ def _print_report(report: RunReport) -> None:
     print(f"Merge summary: {report.merge_summary}")
 
 
-def main(argv=None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    config, load_wait_s = parse_args(argv)
-    report = asyncio.run(run_pipeline(config, load_wait_s))
+# -- subcommands --------------------------------------------------------
+
+def _cmd_solo(args, pcfg) -> int:
+    repo = args.repo.resolve()
+    if not repo.exists():
+        raise SystemExit(f"{repo} does not exist")
+    config = _build_run_config(args, pcfg)
+    model = args.model or pcfg.roles.planner
+    events = EventLog.for_run(config.resolved_scratch_dir(), config.run_id)
+
+    print(f"solo run {config.run_id}: {model} in {repo}", file=sys.stderr)
+    print(f"events: {events.path}", file=sys.stderr)
+
+    result = asyncio.run(solo_session(
+        model=model, repo=repo, task=config.task,
+        orchestrator_url=args.orchestrator_url, admin_url=args.admin_url,
+        api_key=args.api_key, pipeline_cfg=pcfg, events=events,
+        load_wait_s=args.load_wait_s, run_shell_timeout_s=args.run_shell_timeout_s,
+        ensure_resident=not args.no_load,
+    ))
+
+    print(f"\n=== solo {config.run_id} ===")
+    print(f"model: {model}  stop_reason: {result.stop_reason}  turns: {result.turns}  "
+          f"tool calls: {result.tool_calls}")
+    print(f"tokens: {result.prompt_tokens} prompt / {result.completion_tokens} completion  "
+          f"({result.duration_s / 60:.1f} min)")
+    print(f"\n{result.final_message}")
+    return 0 if result.ok else 1
+
+
+def _cmd_run(args, pcfg) -> int:
+    _require_git_repo(args.repo.resolve())
+    config = _build_run_config(args, pcfg)
+    events = EventLog.for_run(config.resolved_scratch_dir(), config.run_id)
+    print(f"run {config.run_id}: events at {events.path}", file=sys.stderr)
+    report = asyncio.run(run_pipeline(config, args.load_wait_s, events))
     _print_report(report)
     return 0 if not report.failed else 1
+
+
+def main(argv=None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    args = build_parser().parse_args(argv)
+    pcfg = pipeline_config.load(args.config)
+    if args.command == "solo":
+        return _cmd_solo(args, pcfg)
+    return _cmd_run(args, pcfg)
 
 
 if __name__ == "__main__":

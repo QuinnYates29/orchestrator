@@ -16,6 +16,41 @@ api_key: null
 # response headers to browser JS.
 cors: true
 
+# Multi-agent pipeline settings (the `pipeline` package). Read by
+# pipeline/config.py only — the orchestrator server ignores this block
+# entirely, so editing it never requires restarting the proxy.
+pipeline:
+  # Which fleet model plays each role. These used to be hardcoded strings
+  # scattered across planner/worker/supervisor/merger; they live here now so a
+  # run can be re-pointed (e.g. everything at ornith for a cheap dry run)
+  # without touching code.
+  roles:
+    planner: ds4-full
+    worker: ornith
+    supervisor: ds4-light
+    merger: ds4-full
+    explorer: ornith
+
+  verify:
+    # Shell command proving a chunk's work is good, run inside that agent's own
+    # clone. null means "no verification configured" — which is reported as
+    # skipped, never as passing. Override per-run with --verify-command.
+    command: null
+    timeout_s: 600
+    # How many times a failing agent gets the verify output fed back into the
+    # SAME conversation before giving up. This is the cheap repair path; the
+    # outer blind retry still exists for agents that got stuck rather than wrong.
+    max_repair_attempts: 2
+
+  limits:
+    # Match ornith's llama-server --parallel; launching more workers than the
+    # backend has slots just queues them behind each other at seconds-per-token.
+    max_concurrent_workers: 4
+    max_agent_turns: 60
+    # Per tool result. The old 50_000 was ~12k input tokens for a single call,
+    # which crowds out context and slows prefill on every subsequent turn.
+    tool_output_chars: 8000
+
 models:
   glm:
     upstream: http://127.0.0.1:8022/v1
@@ -84,7 +119,7 @@ models:
     launch_cmd: >
       llama-server -m /home/quinna/models/Ornith-1.0-35B-GGUF/ornith-1.0-35b-Q4_K_M.gguf
       --port 8091 -ngl 999 --ctx-size 262144 --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0
-      --host 127.0.0.1 --parallel 4 --cont-batching --kv-unified
+      --host 127.0.0.1 --parallel 4 --cont-batching --kv-unified --cache-prompt
 
   ds4:
     upstream: http://127.0.0.1:8092/v1

@@ -84,7 +84,8 @@ async def create_plan(client: OrchestratorClient, config: RunConfig) -> Plan:
             if forced_final else "auto"
         )
         completion = await client.chat_once(
-            "ds4-full", messages, tools=tools, tool_choice=tool_choice, max_tokens=4096,
+            config.model_for("planner"), messages, tools=tools,
+            tool_choice=tool_choice, max_tokens=4096,
         )
         message = completion["choices"][0]["message"]
         messages.append(message)

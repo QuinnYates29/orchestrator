@@ -96,7 +96,8 @@ async def merge(client: OrchestratorClient, config: RunConfig, plan: Plan,
             {"type": "function", "function": {"name": "finish_merge"}} if forced_final else "auto"
         )
         completion = await client.chat_once(
-            "ds4-full", messages, tools=tools, tool_choice=tool_choice, max_tokens=8192,
+            config.model_for("merger"), messages, tools=tools,
+            tool_choice=tool_choice, max_tokens=8192,
         )
         message = completion["choices"][0]["message"]
         messages.append(message)

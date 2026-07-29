@@ -24,9 +24,23 @@ class RunConfig:
     max_agent_turns: int = 60                # hard ceiling on tool-call turns per agent (belt-and-suspenders)
     keep_scratch: bool = True                # per-agent clones are the audit trail; keep by default
     run_id: str = field(default_factory=lambda: time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    # Which fleet model plays each role, from config.yaml's `pipeline.roles`.
+    # Defaults kept here so a RunConfig built by hand (tests, embedding callers)
+    # still works without loading a config file.
+    roles: dict = field(default_factory=lambda: {
+        "planner": "ds4-full", "worker": "ornith", "supervisor": "ds4-light",
+        "merger": "ds4-full", "explorer": "ornith",
+    })
 
     def resolved_scratch_dir(self) -> Path:
         return self.scratch_dir or (self.repo / ".pipeline-runs")
+
+    def model_for(self, role: str) -> str:
+        try:
+            return self.roles[role]
+        except KeyError:
+            raise KeyError(f"no model configured for role {role!r} "
+                           f"(have: {', '.join(sorted(self.roles))})") from None
 
 
 @dataclass

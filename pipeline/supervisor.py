@@ -23,7 +23,7 @@ import logging
 import time
 
 from .client import OrchestratorClient
-from .models import AgentState, AgentStatus, ReviewVerdict, ToolCallRecord
+from .models import AgentState, AgentStatus, ReviewVerdict, RunConfig, ToolCallRecord
 
 log = logging.getLogger("pipeline.supervisor")
 
@@ -71,7 +71,8 @@ def _format_tool_log(records: list[ToolCallRecord]) -> str:
     return "\n".join(f"- {r.name}({r.arguments}) -> {r.result_summary}" for r in records)
 
 
-async def request_verdict(client: OrchestratorClient, state: AgentState) -> ReviewVerdict:
+async def request_verdict(client: OrchestratorClient, state: AgentState,
+                           model: str = "ds4-light") -> ReviewVerdict:
     system = (
         "You are reviewing a coding agent's live in-progress work to catch two specific failure "
         "modes: getting stuck in a repetitive thinking loop, or hallucinating facts/files/APIs "
@@ -87,12 +88,12 @@ async def request_verdict(client: OrchestratorClient, state: AgentState) -> Revi
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     try:
         completion = await client.chat_once(
-            "ds4-light", messages, tools=[REVIEW_TOOL],
+            model, messages, tools=[REVIEW_TOOL],
             tool_choice={"type": "function", "function": {"name": "review_agent"}},
             max_tokens=200,
         )
     except Exception:
-        log.exception("ds4-light review request failed for %s - failing open", state.label)
+        log.exception("%s review request failed for %s - failing open", model, state.label)
         return ReviewVerdict(verdict="continue")
 
     message = completion["choices"][0]["message"]
@@ -112,11 +113,14 @@ async def supervise(client: OrchestratorClient, config: RunConfig,
     last_reviewed: dict[str, float] = {}
     last_checked_len: dict[str, int] = {}
 
+    supervisor_model = config.model_for("supervisor")
+
     async def review_and_maybe_kill(label: str, state: AgentState, task: asyncio.Task, prefix: str = ""):
         last_reviewed[label] = time.monotonic()
-        verdict = await request_verdict(client, state)
+        verdict = await request_verdict(client, state, supervisor_model)
         if verdict.should_kill and state.status == AgentStatus.RUNNING:
-            state.kill_reason = prefix + (verdict.reason or "ds4-light flagged this agent as stuck")
+            state.kill_reason = prefix + (
+                verdict.reason or f"{supervisor_model} flagged this agent as stuck")
             state.status = AgentStatus.KILLED
             task.cancel()
             log.warning("killed %s: %s", label, state.kill_reason)

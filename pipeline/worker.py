@@ -59,7 +59,8 @@ async def run_agent(client: OrchestratorClient, config: RunConfig, plan: Plan, s
             assistant_content = ""
 
             async for event in client.chat_stream(
-                "ornith", state.messages, tools=TOOL_SCHEMAS, tool_choice="auto", max_tokens=8192,
+                config.model_for("worker"), state.messages, tools=TOOL_SCHEMAS,
+                tool_choice="auto", max_tokens=8192,
             ):
                 if event.reasoning_delta:
                     state.reasoning_buffer += event.reasoning_delta
