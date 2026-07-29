@@ -164,6 +164,63 @@ Both continuation runs (3b, 6b) succeeded when the task file named the bug
 explicitly and gave a one-line command to reproduce it. That is the cheapest
 intervention found in this project.
 
+---
+
+## The end-to-end run, and the seven bugs only it could find
+
+Every fix above came from watching phases run. A final `pipeline run` against a
+throwaway repo — three converters plus a `convert()` that needs all of them —
+found seven more, **none of which any phase's own test suite could reach**,
+because each lived in the seam between two phases:
+
+| Bug | Origin |
+|---|---|
+| `--max-tokens` parsed by `run`, ignored by planner (4096), worker and merger | 0/3/4 |
+| `run_pipeline` took none of the four arguments `_cmd_resume` passes — `resume` was dead on arrival | 6 |
+| `run` had no `--no-load`; residency hardcoded `"ds4"` and passed the role's model as a profile | **mine, phase 0** |
+| `_init_integration_repo` defined and never called | 3 |
+| chunk commits merged without being fetched into the integration repo | 3 |
+| my fix for the above gated on `len(waves) > 1`, but integration is per chunk | **mine** |
+| agents commit their own `__pycache__`; two chunks importing one module each commit a conflicting binary `.pyc` | 3/4 |
+| `_integrate_chunk` never aborted a conflicted merge, so one conflict cascaded into fake ones for every later chunk | 3 |
+
+The lesson is sharper than the test-file one: **six phases with 232 passing
+tests still could not tell me whether `pipeline run` worked.** Phase 6 wrote 18
+thorough tests for `state.py` and never invoked the CLI that consumes it.
+Phase 3's executor tests used a fake client, so no git ever ran and two git
+bugs shipped. Unit tests bounded by a phase's own file list cannot see the
+integration surface, and that is where every remaining bug lived.
+
+### Final result
+
+Run `20260729-173614-6fa39c`, all five roles on ornith at 10.0.0.17:
+
+```
+[merged_after_escalation] chunk-1: Extend registry and add all converter modules
+[merged_after_escalation] chunk-2: Add pytest tests for all new modules
+[no_changes]              chunk-3: Run tests to verify everything passes
+```
+
+3/3 agents completed in isolated clones under supervision, and the merger's
+escalation path resolved the `.pyc` collisions on its own rather than failing
+the run. The merged library works: 100°C → 212°F, 0°C → 273.15 K, 1 m →
+3.2808 ft, 1 kg → 2.2046 lb, and `convert(1, "m", "kg")` raises
+`ValueError: Cannot convert between dimensions 'length' and 'mass'`. Its own
+25 tests pass.
+
+### Two defects in what the agents produced
+
+Not harness bugs — quality limits of the models, worth recording:
+
+- **`convert.py` never imports the converter modules.** Units register on
+  import, so `from units.convert import convert` alone sees an empty registry.
+  The 25 tests pass only because pytest imports every test module, and those
+  import the converters. A test-order-dependent pass masking a real bug.
+- **Unit names drifted from the task.** It asked for "metres, feet, inches";
+  the agents registered `m`, `ft`, `in` for length and mass but full names
+  (`celsius`, `kelvin`) for temperature. Internally consistent, inconsistent
+  with the request.
+
 ## Known-unfixable during this run
 
 Neither ds4-server nor ornith's llama-server reports `usage` in streaming
