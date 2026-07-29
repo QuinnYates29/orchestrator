@@ -93,7 +93,7 @@ selected; token totals surface unreported calls.
 ## Environment — read this before running anything
 
 You are already in the repository you are working on:
-`/home/quinna/tools/orchestrator-impl`. **Never `cd` somewhere else.** All your
+`/home/quinna/tools/orchestrator-p6`. **Never `cd` somewhere else.** All your
 files are here and only here.
 
 There is no `python` on PATH. The interpreter lives in a *different* directory
@@ -127,3 +127,12 @@ of turns loses the summary.
 ## Definition of done
 
 `python -m pytest tests/ -q` fully green, then summarize.
+
+## Note on the existing test suite
+
+`tests/test_pipeline_tools.py` has 22 pre-existing failures from an earlier
+phase that used bare `async def test_*`. They are **not yours** — do not fix
+them, do not let them stop you, and do not count them as your own failures.
+One test in `tests/test_pipeline_verify.py` takes 100 seconds of real time, so
+iterate on `pytest tests/test_pipeline_state.py -q` and run the full suite once
+at the end.

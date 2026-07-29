@@ -30,6 +30,7 @@ from pathlib import Path
 from .client import OrchestratorClient
 from .events import EventLog
 from .models import AgentState, AgentStatus, ChunkOutcome, Plan, PlanChunk, RunConfig
+from .state import save_state
 from .supervisor import supervise
 from .worker import build_initial_messages, run_agent
 from .workspace import create_agent_workspace
@@ -392,4 +393,14 @@ async def execute_plan(
 
     # Sort outcomes in planner order.
     outcomes.sort(key=lambda o: chunk_order[o.chunk.id])
+
+    # Persist state after every transition — a run that dies is the one we
+    # need the state for. Never take down the run because state persistence
+    # failed.
+    state_path = config.resolved_scratch_dir() / config.run_id / STATE_PATH
+    try:
+        save_state(state_path, config.run_id, "", plan, outcomes, base_commit)
+    except Exception:
+        log.exception("failed to persist state for run %s", config.run_id)
+
     return outcomes

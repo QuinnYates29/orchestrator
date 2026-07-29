@@ -3,10 +3,11 @@
     pipeline run     --repo PATH --task "..."    fan-out/merge (plan -> N agents -> merge)
     pipeline solo    --repo PATH --task "..."    single agent, one working directory
     pipeline explore --repo PATH --question "..."   read-only research fan-out
+    pipeline resume  --repo PATH <run_id>         resume an interrupted run
+    pipeline runs    --repo PATH                  list runs
 
-Later phases add `resume` and `runs`. `run` keeps every flag it had
-before the subcommand split, so existing invocations work by inserting the word
-`run`.
+`run` keeps every flag it had before the subcommand split, so existing
+invocations work by inserting the word `run`.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import config as pipeline_config
@@ -22,10 +24,11 @@ from .client import OrchestratorClient
 from .events import EventLog
 from .executor import execute_plan
 from .merger import merge
-from .models import ChunkOutcome, RunConfig, RunReport
+from .models import AgentStatus, ChunkOutcome, Plan, RunConfig, RunReport
 from .explore import explore_session
 from .planner import create_plan
 from .solo import solo_session
+from .state import RunState, RunSummary, find_runs, load_state, save_state
 from .workspace import capture_base_commit, cleanup_workspace
 
 log = logging.getLogger("pipeline.cli")
@@ -130,6 +133,51 @@ def build_parser() -> argparse.ArgumentParser:
                                 "(default 6).")
     explore_p.add_argument("--no-load", action="store_true",
                            help="Skip the /admin/load residency check (the backend is already up).")
+
+    resume_p = sub.add_parser(
+        "resume", help="Resume a previously interrupted run from saved state.",
+        description="Reloads the saved plan and per-chunk outcomes from state.json under the "
+                    "scratch dir, re-runs only the chunks that did not complete (including any "
+                    "SKIPPED chunks whose dependencies have since completed), and proceeds to the "
+                    "merge phase as normal. --replan re-runs the planner from scratch instead of "
+                    "reusing the stored plan.",
+    )
+    resume_p.add_argument("run_id", help="Run id to resume.")
+    resume_p.add_argument("--repo", type=Path, required=True,
+                          help="Target repository root.")
+    resume_p.add_argument("--scratch-dir", type=Path, default=None,
+                          help="Where run artifacts live. Defaults to <repo>/.pipeline-runs.")
+    resume_p.add_argument("--replan", action="store_true",
+                          help="Re-run the planner from scratch instead of reusing the stored plan.")
+    resume_p.add_argument("--orchestrator-url", default="http://127.0.0.1:8080/v1")
+    resume_p.add_argument("--admin-url", default="http://127.0.0.1:8080")
+    resume_p.add_argument("--api-key", default=os.environ.get("ORCHESTRATOR_API_KEY"))
+    resume_p.add_argument("--config", type=Path, default=None,
+                          help="Path to config.yaml holding the `pipeline:` block. Defaults to the one "
+                               "next to the package.")
+    resume_p.add_argument("--load-wait-s", type=float, default=180.0,
+                          help="How long each /admin/load call blocks waiting for a model to become resident.")
+    resume_p.add_argument("--run-shell-timeout-s", type=float, default=900.0,
+                          help="Dead-man's-switch on a single run_shell call (default 15min).")
+    resume_p.add_argument("--max-agent-turns", type=int, default=None,
+                          help="Override pipeline.limits.max_agent_turns from config.yaml.")
+    resume_p.add_argument("--no-load", action="store_true",
+                          help="Skip the /admin/load residency check (the backend is already up).")
+
+    runs_p = sub.add_parser(
+        "runs", help="List runs in the scratch directory.",
+        description="Lists runs newest first: run id, repo, task (truncated), chunk counts by "
+                    "status, whether a merge commit exists, wall-clock duration, and token totals "
+                    "per model from the event log.",
+    )
+    runs_p.add_argument("--repo", type=Path, default=None,
+                        help="Target repository root - scratch dir defaults to <repo>/.pipeline-runs.")
+    runs_p.add_argument("--scratch-dir", type=Path, default=None,
+                        help="Scratch directory to list runs from. Defaults to <repo>/.pipeline-runs "
+                             "or ./.pipeline-runs if --repo is not given.")
+    runs_p.add_argument("--config", type=Path, default=None,
+                        help="Path to config.yaml holding the `pipeline:` block. Defaults to the one "
+                             "next to the package.")
     return p
 
 
@@ -293,6 +341,194 @@ def _cmd_explore(args, pcfg) -> int:
     return 0
 
 
+# -- resume -------------------------------------------------------------
+
+
+def _resolve_scratch(args, repo: Path) -> Path:
+    """Pick the scratch dir: explicit --scratch-dir, or <repo>/.pipeline-runs."""
+    if args.scratch_dir:
+        return args.scratch_dir
+    return repo / ".pipeline-runs"
+
+
+def _cmd_resume(args, pcfg) -> int:
+    repo = args.repo.resolve()
+    if not repo.exists():
+        raise SystemExit(f"{repo} does not exist")
+    _require_git_repo(repo)
+    scratch = _resolve_scratch(args, repo)
+    run_state_path = scratch / args.run_id / "state.json"
+
+    try:
+        state = load_state(run_state_path)
+    except Exception as e:
+        existing = find_runs(scratch)
+        msg = f"could not load state for run {args.run_id!r}: {e}"
+        if existing:
+            msg += "\nExisting runs in " + str(scratch) + ":"
+            for r in existing:
+                msg += f"\n  {r.run_id}  task={r.task[:50]}"
+        raise SystemExit(msg)
+
+    # Build a RunConfig that preserves the original run id so event log and
+    # workspace layout match what's already on disk.
+    config = RunConfig(
+        repo=repo,
+        task=state.task,
+        orchestrator_url=args.orchestrator_url,
+        admin_url=args.admin_url,
+        api_key=args.api_key,
+        scratch_dir=scratch,
+        run_id=state.run_id,
+        run_shell_timeout_s=args.run_shell_timeout_s,
+        max_agent_turns=args.max_agent_turns or pcfg.limits.max_agent_turns,
+        roles=pcfg.roles.as_dict(),
+    )
+
+    events = EventLog.for_run(config.resolved_scratch_dir(), config.run_id)
+    print(f"resume run {config.run_id}: events at {events.path}", file=sys.stderr)
+
+    if args.replan:
+        print("re-running planner from scratch (--replan)", file=sys.stderr)
+        new_plan = asyncio.run(create_plan_from_config(config))
+        state.plan = new_plan
+        # Clear outcomes for chunks we are re-planning so they get re-run.
+        for o in state.outcomes:
+            o.status = AgentStatus.PENDING
+
+    # Determine which chunks still need work.
+    incomplete = [o for o in state.outcomes if o.status != AgentStatus.COMPLETED]
+    if not incomplete:
+        print(f"all {len(state.outcomes)} chunk(s) already completed — nothing to do")
+        return 0
+
+    print(f"resuming with {len(incomplete)} incomplete chunk(s) out of {len(state.outcomes)}:",
+          file=sys.stderr)
+    for o in incomplete:
+        print(f"  [{o.status.value}] {o.chunk.id}: {o.chunk.title}", file=sys.stderr)
+
+    # Find a workspace for the highest existing attempt per chunk so we don't
+    # clobber anything, and so new attempts get a fresh number.
+    max_attempts: dict[str, int] = {}
+    for o in state.outcomes:
+        if o.workspace and o.workspace.exists():
+            # Parse attempt number from path: .../<chunk_id>-attempt<N>/
+            try:
+                attempt_str = o.workspace.name.split("-attempt")[-1]
+                attempt = int(attempt_str)
+            except (ValueError, IndexError):
+                attempt = 0
+            max_attempts[o.chunk.id] = max(max_attempts.get(o.chunk.id, 0), attempt)
+
+    # Re-run the plan through the executor. The executor will create new
+    # workspaces with incremented attempt numbers.
+    report = asyncio.run(run_pipeline(config, args.load_wait_s, events, plan=state.plan,
+                                      base_commit=state.base_commit,
+                                      existing_outcomes=state.outcomes,
+                                      max_attempts=max_attempts))
+
+    print(f"\n=== resume {report.run_id} ===")
+    print(f"Plan: {len(report.plan.chunks)} chunk(s)")
+    for outcome in report.outcomes:
+        line = (f"  [{outcome.status.value}] {outcome.chunk.id}: {outcome.chunk.title} "
+                f"(attempts: {outcome.attempts})")
+        if outcome.kill_reason:
+            line += f" - {outcome.kill_reason}"
+        print(line)
+    print(f"\nSucceeded: {len(report.succeeded)}/{len(report.outcomes)}")
+    if report.merge_commit:
+        print(f"Merge commit: {report.merge_commit}")
+    else:
+        print("No new commit was created during the merge pass.")
+    print(f"Merge summary: {report.merge_summary}")
+    return 0 if not report.failed else 1
+
+
+async def create_plan_from_config(config: RunConfig) -> Plan:
+    """Async helper: create a plan from a RunConfig, used by --replan."""
+    async with OrchestratorClient(config.orchestrator_url, config.admin_url, config.api_key) as client:
+        return await create_plan(client, config)
+
+
+# -- runs list ----------------------------------------------------------
+
+
+def _format_tokens(totals: dict[str, dict[str, int]]) -> str:
+    """Format token totals, flagging unreported calls honestly."""
+    if not totals:
+        return "(no usage events recorded)"
+    parts = []
+    for model, data in totals.items():
+        prompt = int(data["prompt_tokens"] or 0)
+        completion = int(data["completion_tokens"] or 0)
+        total = prompt + completion
+        calls = int(data["calls"] or 0)
+        unreported = int(data["unreported_calls"] or 0)
+        if unreported:
+            parts.append(f"{model}: ≥ {total:,} tokens ({calls - unreported + unreported} calls, "
+                         f"{unreported} unreported)")
+        else:
+            parts.append(f"{model}: {total:,} tokens ({calls} calls)")
+    return "  |  ".join(parts)
+
+
+def _format_counts(status_counts: dict[str, int]) -> str:
+    """Format chunk status counts: '5 completed, 1 failed, 2 skipped'."""
+    if not status_counts:
+        return "(no chunks)"
+    parts = []
+    for status, count in sorted(status_counts.items()):
+        parts.append(f"{count} {status}")
+    return ", ".join(parts)
+
+
+def _format_duration(created_at: float) -> str:
+    """Wall-clock duration from created_at to now."""
+    if not created_at:
+        return "unknown"
+    delta = time.time() - created_at
+    if delta < 60:
+        return f"{delta:.0f}s"
+    if delta < 3600:
+        return f"{delta / 60:.1f}min"
+    return f"{delta / 3600:.1f}h"
+
+
+def _cmd_runs(args, pcfg) -> int:
+    repo = Path(args.repo) if args.repo else Path.cwd()
+    if args.scratch_dir:
+        scratch = Path(args.scratch_dir)
+    else:
+        scratch = _resolve_scratch(args, repo)
+    if not scratch.exists():
+        print(f"no runs found (scratch dir does not exist: {scratch})")
+        return 0
+
+    runs = find_runs(scratch)
+    if not runs:
+        print(f"no runs found in {scratch}")
+        return 0
+
+    print(f"{'run_id':<32} {'repo':<30} {'task':<30} {'chunks':<40} "
+          f"{'merge':<8} {'duration':<10}")
+    print("-" * 150)
+    for r in runs:
+        run_dir = scratch / r.run_id
+        events_path = run_dir / "events.jsonl"
+        token_info = ""
+        if events_path.exists():
+            token_info = _format_tokens(EventLog.token_totals(events_path))
+        task_short = r.task[:27] + "..." if len(r.task) > 30 else r.task
+        merge_flag = "✓" if r.merge_commit else " "
+        print(f"{r.run_id:<32} {str(r.repo):<30} {task_short:<30} "
+              f"{_format_counts(r.status_counts):<40} "
+              f"{merge_flag:<8} {_format_duration(r.created_at):<10}")
+        if token_info:
+            print(f"  tokens: {token_info}")
+
+    return 0
+
+
 def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
@@ -301,6 +537,10 @@ def main(argv=None) -> int:
         return _cmd_solo(args, pcfg)
     if args.command == "explore":
         return _cmd_explore(args, pcfg)
+    if args.command == "resume":
+        return _cmd_resume(args, pcfg)
+    if args.command == "runs":
+        return _cmd_runs(args, pcfg)
     return _cmd_run(args, pcfg)
 
 
