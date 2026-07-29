@@ -81,7 +81,7 @@ def topological_waves(chunks: list[PlanChunk]) -> list[list[PlanChunk]]:
         for dep in c.depends_on:
             dependents[dep].append(c.id)
 
-    order = {cid: i for i, cid in enumerate(chunks)}
+    order = {c.id: i for i, c in enumerate(chunks)}
     waves: list[list[str]] = []
     queue: deque[str] = deque()
     # Initial wave: chunks with no dependencies, in planner order.
