@@ -22,6 +22,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
+
 from .client import OrchestratorClient, OrchestratorError
 from .config import PipelineCfg
 from .events import EventLog, NullEventLog
@@ -71,6 +73,8 @@ async def run_solo(
     run_shell_timeout_s: float = 900.0,
     max_tokens: int = 8192,
     max_empty_retries: int = 2,
+    max_transport_retries: int = 3,
+    transport_backoff_s: float = 5.0,
     events: EventLog | None = None,
     system_prompt: str = SYSTEM_PROMPT,
 ) -> SoloResult:
@@ -97,26 +101,63 @@ async def run_solo(
         reasoning_chars = 0
         usage: dict | None = None
         finish_reason = ""
+        aborted = False
 
-        try:
-            async for event in client.chat_stream(
-                model, messages, tools=TOOL_SCHEMAS, tool_choice="auto", max_tokens=max_tokens,
-            ):
-                if event.reasoning_delta:
-                    reasoning_chars += len(event.reasoning_delta)
-                if event.content_delta:
-                    content += event.content_delta
-                if event.usage:
-                    usage = event.usage
-                if event.finish_reason:
-                    finish_reason = event.finish_reason
-                    if event.tool_calls:
-                        tool_calls = event.tool_calls
-        except OrchestratorError as e:
-            log.error("turn %d: orchestrator returned %s: %s", result.turns, e.status_code, e.body)
-            events.emit("solo_error", turn=result.turns, status_code=e.status_code, body=str(e.body))
-            result.stop_reason = "error"
-            result.final_message = f"orchestrator error {e.status_code}: {e.body}"
+        # A backend dying mid-stream raises out of httpx, not as an
+        # OrchestratorError, and used to kill the run outright - losing every
+        # turn of work because a llama-server went away for a few seconds.
+        # Retry the turn: the conversation so far is still valid, so a fresh
+        # request costs prefill and nothing else.
+        for attempt in range(max_transport_retries + 1):
+            tool_calls, content, reasoning_chars, usage, finish_reason = [], "", 0, None, ""
+            try:
+                async for event in client.chat_stream(
+                    model, messages, tools=TOOL_SCHEMAS, tool_choice="auto", max_tokens=max_tokens,
+                ):
+                    if event.reasoning_delta:
+                        reasoning_chars += len(event.reasoning_delta)
+                    if event.content_delta:
+                        content += event.content_delta
+                    if event.usage:
+                        usage = event.usage
+                    if event.finish_reason:
+                        finish_reason = event.finish_reason
+                        if event.tool_calls:
+                            tool_calls = event.tool_calls
+                break
+            except OrchestratorError as e:
+                # The backend answered, it just said no. Retrying a 4xx/5xx
+                # here would hammer a model that is already unhappy.
+                log.error("turn %d: orchestrator returned %s: %s",
+                          result.turns, e.status_code, e.body)
+                events.emit("solo_error", turn=result.turns,
+                            status_code=e.status_code, body=str(e.body))
+                result.stop_reason = "error"
+                result.final_message = f"orchestrator error {e.status_code}: {e.body}"
+                aborted = True
+                break
+            except httpx.HTTPError as e:
+                detail = f"{type(e).__name__}: {e}"
+                if attempt < max_transport_retries:
+                    delay = transport_backoff_s * (2 ** attempt)
+                    log.warning("turn %d: transport failure (%s), retry %d/%d in %.0fs",
+                                result.turns, detail, attempt + 1, max_transport_retries, delay)
+                    events.emit("solo_transport_retry", turn=result.turns,
+                                attempt=attempt + 1, detail=detail)
+                    await asyncio.sleep(delay)
+                    continue
+                log.error("turn %d: transport failure after %d retries (%s)",
+                          result.turns, max_transport_retries, detail)
+                events.emit("solo_transport_failed", turn=result.turns, detail=detail)
+                result.stop_reason = "transport_error"
+                result.final_message = (
+                    f"backend connection failed after {max_transport_retries} "
+                    f"retries ({detail}); the work so far is on disk"
+                )
+                aborted = True
+                break
+
+        if aborted:
             break
 
         if usage:

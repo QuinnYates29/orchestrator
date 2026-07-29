@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 
 from pipeline.client import OrchestratorError, StreamEvent
@@ -191,3 +192,62 @@ def test_whitespace_only_content_counts_as_empty(tmp_path):
                            task="x", max_empty_retries=1))
     assert not result.ok
     assert result.stop_reason == "empty_response"
+
+
+class FlakyClient(FakeClient):
+    """Drops the connection mid-stream `fail_times` times, then behaves."""
+
+    def __init__(self, turns, fail_times):
+        super().__init__(turns)
+        self.fail_times = fail_times
+        self.attempts = 0
+
+    async def chat_stream(self, model, messages, **kwargs):
+        self.attempts += 1
+        if self.attempts <= self.fail_times:
+            yield StreamEvent(reasoning_delta="partial...")
+            raise httpx.RemoteProtocolError("peer closed connection")
+        async for ev in super().chat_stream(model, messages, **kwargs):
+            yield ev
+
+
+def test_transport_drop_is_retried_not_fatal(tmp_path):
+    """A llama-server dying mid-stream used to kill the whole run."""
+    client = FlakyClient([("recovered", None, None)], fail_times=2)
+    result = _run(run_solo(client, model="ornith", repo=tmp_path, task="x",
+                           transport_backoff_s=0))
+    assert result.ok
+    assert result.stop_reason == "finished"
+    assert result.final_message == "recovered"
+    assert client.attempts == 3
+
+
+def test_transport_drop_gives_up_with_its_own_stop_reason(tmp_path):
+    client = FlakyClient([("never reached", None, None)], fail_times=99)
+    result = _run(run_solo(client, model="ornith", repo=tmp_path, task="x",
+                           max_transport_retries=2, transport_backoff_s=0))
+    assert not result.ok
+    assert result.stop_reason == "transport_error"
+    assert "on disk" in result.final_message
+
+
+def test_partial_stream_is_discarded_on_retry(tmp_path):
+    """The half-received turn must not leak into the retried one."""
+    (tmp_path / "a.txt").write_text("hi")
+    client = FlakyClient([
+        ("", [{"id": "c1", "name": "read_file", "arguments": {"path": "a.txt"}}], None),
+        ("done", None, None),
+    ], fail_times=1)
+    result = _run(run_solo(client, model="ornith", repo=tmp_path, task="x",
+                           transport_backoff_s=0))
+    assert result.ok
+    assert result.tool_calls == 1
+
+
+def test_http_status_error_is_not_retried(tmp_path):
+    """A 503 means the backend answered; retrying just hammers it."""
+    client = FakeClient([(OrchestratorError(503, {"error": "nope"}), None, None)])
+    result = _run(run_solo(client, model="ds4-full", repo=tmp_path, task="x"))
+    assert not result.ok
+    assert result.stop_reason == "error"
+    assert len(client.calls) == 1
