@@ -53,6 +53,11 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
                    help="Dead-man's-switch on a single run_shell call (default 15min).")
     p.add_argument("--max-agent-turns", type=int, default=None,
                    help="Override pipeline.limits.max_agent_turns from config.yaml.")
+    p.add_argument("--max-tokens", type=int, default=8192,
+                   help="Per-turn generation cap. Heavy reasoners need headroom: ornith "
+                        "has produced 35k characters of reasoning_content and hit this "
+                        "cap mid-thought, ending the turn with no answer (finish_reason="
+                        "length). Raise it if you see empty-response nudges in the log.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -287,7 +292,8 @@ def _cmd_solo(args, pcfg) -> int:
         orchestrator_url=args.orchestrator_url, admin_url=args.admin_url,
         api_key=args.api_key, pipeline_cfg=pcfg, events=events,
         load_wait_s=args.load_wait_s, run_shell_timeout_s=args.run_shell_timeout_s,
-        ensure_resident=not args.no_load,
+        ensure_resident=not args.no_load, max_tokens=args.max_tokens,
+        max_turns=args.max_agent_turns or pcfg.limits.max_agent_turns,
     ))
 
     print(f"\n=== solo {config.run_id} ===")

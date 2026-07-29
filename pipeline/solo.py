@@ -265,6 +265,8 @@ async def solo_session(
     load_wait_s: float = 180.0,
     run_shell_timeout_s: float = 900.0,
     ensure_resident: bool = True,
+    max_tokens: int = 8192,
+    max_turns: int | None = None,
 ) -> SoloResult:
     """Wraps run_solo with client setup and residency.
 
@@ -278,8 +280,9 @@ async def solo_session(
             await ensure_model_resident(client, model, load_wait_s)
         return await run_solo(
             client, model=model, repo=repo, task=task,
-            max_turns=pipeline_cfg.limits.max_agent_turns,
+            max_turns=max_turns or pipeline_cfg.limits.max_agent_turns,
             run_shell_timeout_s=run_shell_timeout_s,
+            max_tokens=max_tokens,
             events=events,
         )
 
