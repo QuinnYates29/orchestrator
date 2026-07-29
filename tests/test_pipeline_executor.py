@@ -358,3 +358,75 @@ def test_execute_plan_semaphore_caps_concurrency(tmp_path):
 # Run the tests
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# --- Wave integration against real git ------------------------------------
+#
+# The executor's other tests use a fake client, which is why two real bugs
+# shipped: _init_integration_repo was defined but never called, and
+# _integrate_chunk merged a workspace commit that had never been fetched into
+# the integration repo. Neither is reachable without running git.
+
+import subprocess
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True,
+                   capture_output=True, text=True)
+
+
+def _make_repo(path):
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "--quiet", "-b", "main")
+    _git(path, "config", "user.email", "t@t")
+    _git(path, "config", "user.name", "t")
+    (path / "base.txt").write_text("base\n")
+    _git(path, "add", "-A")
+    _git(path, "commit", "--quiet", "-m", "base")
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=path,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def test_integration_repo_is_created_before_use(tmp_path):
+    from pipeline.executor import _init_integration_repo
+
+    repo = tmp_path / "repo"
+    base = _make_repo(repo)
+    integration = tmp_path / "scratch" / "integration"
+    assert not integration.exists()
+
+    asyncio.run(_init_integration_repo(integration, repo, base))
+
+    assert (integration / ".git").exists()
+    assert (integration / "base.txt").read_text() == "base\n"
+
+
+def test_integrate_chunk_fetches_commits_from_the_workspace(tmp_path):
+    """The integration repo clones the *original* repo, so a chunk's new
+    commits are absent until fetched. Without the fetch, git merge fails."""
+    from pipeline.events import NullEventLog
+    from pipeline.executor import _init_integration_repo, _integrate_chunk
+    from pipeline.models import AgentStatus, ChunkOutcome, PlanChunk
+
+    repo = tmp_path / "repo"
+    base = _make_repo(repo)
+
+    workspace = tmp_path / "ws"
+    _git(tmp_path, "clone", "--quiet", "--local", str(repo), str(workspace))
+    _git(workspace, "config", "user.email", "t@t")
+    _git(workspace, "config", "user.name", "t")
+    (workspace / "added.txt").write_text("from the chunk\n")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "--quiet", "-m", "chunk work")
+
+    integration = tmp_path / "scratch" / "integration"
+    asyncio.run(_init_integration_repo(integration, repo, base))
+
+    chunk = PlanChunk(id="c1", title="t", description="d")
+    outcome = ChunkOutcome(chunk=chunk, status=AgentStatus.COMPLETED,
+                           workspace=workspace)
+
+    new_head = asyncio.run(_integrate_chunk(integration, chunk, outcome, NullEventLog()))
+
+    assert new_head, "integration should have produced a new commit"
+    assert (integration / "added.txt").read_text() == "from the chunk\n"

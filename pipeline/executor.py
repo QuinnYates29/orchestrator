@@ -211,6 +211,18 @@ async def _integrate_chunk(
     if not chunk_commit:
         return None
 
+    # The integration repo is a clone of the *original* repo, so the chunk's
+    # new commits do not exist in it yet. Fetch them across before merging -
+    # without this, `git merge <sha>` fails with "not something we can merge".
+    code, _, err = await run_argv(
+        ["git", "fetch", "--quiet", str(outcome.workspace), chunk_commit],
+        cwd=integration_path,
+    )
+    if code != 0:
+        log.warning("could not fetch chunk %s from its workspace: %s", chunk.id, err.strip())
+        events.emit("merge_conflict", chunk=chunk.id, reason=f"fetch failed: {err.strip()}")
+        return None
+
     # Try to merge chunk_commit into the integration repo.
     code, _, err = await run_argv(
         ["git", "merge", "--no-ff", "--quiet", chunk_commit,
@@ -328,6 +340,12 @@ async def execute_plan(
             outcomes_by_id[chunk.id] = prior
             outcomes.append(prior)
             events.emit("chunk_reused", chunk=chunk.id, status=prior.status.value)
+
+    # The integration repo must exist before the first wave tries to merge
+    # into it. _init_integration_repo was written but never called, so
+    # _integrate_chunk ran git in a directory that did not exist.
+    if len(waves) > 1:
+        await _init_integration_repo(integration_path, config.repo, base_commit)
 
     # --- Supervisor covers the *entire* execution phase across all waves.
     agents: dict[str, tuple[AgentState, asyncio.Task]] = {}
