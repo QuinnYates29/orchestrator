@@ -18,4 +18,4 @@ A small command-line tool that reviews a git diff and reports findings.
 
 ## Running the tests
 
-    python -m pytest tests/ -q
+    python3 -m pytest tests/ -q
