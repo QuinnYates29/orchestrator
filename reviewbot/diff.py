@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from pathlib import Path
 
 from reviewbot.models import FileDiff, Hunk
 
@@ -134,19 +135,23 @@ def parse_diff(text: str) -> list[FileDiff]:
 # --------------------------------------------------------------------------- #
 
 def collect_diff(
-    revision: str | None = None,
-    cached: bool = False,
+    *,
+    rev: str | None = None,
+    staged: bool = False,
+    cwd: Path | None = None,
 ) -> str:
     """Run ``git diff`` and return the diff text.
 
     Parameters
     ----------
-    revision : str, optional
+    rev : str, optional
         If given, diff against this revision (``git diff <revision>``).
-        When *revision* is set, *cached* is ignored.
-    cached : bool
-        If True and no *revision* is given, diff staged changes
+        When *rev* is set, *staged* is ignored.
+    staged : bool
+        If True and no *rev* is given, diff staged changes
         (``git diff --cached``).  Default: unstaged changes.
+    cwd : Path, optional
+        Path to the git repository (default: current directory).
 
     Returns
     -------
@@ -155,10 +160,13 @@ def collect_diff(
     """
     cmd = ["git", "diff"]
 
-    if revision:
-        cmd.append(revision)
-    elif cached:
+    if rev:
+        cmd.append(rev)
+    elif staged:
         cmd.append("--cached")
 
-    result = subprocess.run(cmd, capture_output=True, check=True)
+    if cwd is not None:
+        result = subprocess.run(cmd, capture_output=True, check=True, cwd=str(cwd))
+    else:
+        result = subprocess.run(cmd, capture_output=True, check=True)
     return result.stdout.decode("utf-8", errors="replace")

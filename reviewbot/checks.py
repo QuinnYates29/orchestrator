@@ -1,7 +1,7 @@
 """Predefined checks for reviewbot.
 
 Each check is a callable that takes a FileDiff and returns a list of Finding
-objects.  The module also exports ALL_CHECKS (a list of check tuples) and
+objects.  The module also exports ALL_CHECKS (a set of check names) and
 run_checks() which produces a Review from a list of diffs.
 """
 from __future__ import annotations
@@ -96,12 +96,21 @@ def long_line(filediff: FileDiff) -> list[Finding]:
 # Registry
 # ---------------------------------------------------------------------------
 
-ALL_CHECKS: list[tuple[str, str, callable]] = [
-    ('debug-print', 'WARNING for lines containing print()', debug_print),
-    ('todo-comment', 'INFO for lines containing TODO or FIXME', todo_comment),
-    ('bare-except', 'ERROR for bare except:', bare_except),
-    ('long-line', 'WARNING for lines > 100 characters', long_line),
-]
+# Exported for CLI help text and filtering: a set of all known check names.
+ALL_CHECKS: set[str] = {
+    "debug-print",
+    "todo-comment",
+    "bare-except",
+    "long-line",
+}
+
+# Internal mapping from check name to (description, callable).
+_CHECK_REGISTRY: dict[str, tuple[str, callable]] = {
+    "debug-print": ("WARNING for lines containing print()", debug_print),
+    "todo-comment": ("INFO for lines containing TODO or FIXME", todo_comment),
+    "bare-except": ("ERROR for bare except:", bare_except),
+    "long-line": ("WARNING for lines > 100 characters", long_line),
+}
 
 
 def run_checks(
@@ -125,15 +134,19 @@ def run_checks(
     review = Review()
     review.files_reviewed = len(filediffs)
 
-    checks_to_run: list[tuple[str, str, callable]] = []
-    for name, desc, func in ALL_CHECKS:
-        if enabled is None or name in enabled:
-            checks_to_run.append((name, desc, func))
+    if enabled is None:
+        enabled = ALL_CHECKS
+
+    checks_to_run = [
+        _CHECK_REGISTRY[name]
+        for name in enabled
+        if name in _CHECK_REGISTRY
+    ]
 
     for filediff in filediffs:
         if not _only_py(filediff):
             continue
-        for name, desc, func in checks_to_run:
+        for _desc, func in checks_to_run:
             findings = func(filediff)
             review.findings.extend(findings)
 
