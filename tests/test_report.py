@@ -22,7 +22,7 @@ def test_format_text_single_finding():
     review = Review(findings=findings, files_reviewed=1)
     expected = (
         "a.py:10: error [my-check] bad thing\n"
-        "1 finding across 1 file(s)"
+        "1 finding in 1 file (1 reviewed)"
     )
     assert format_text(review) == expected
 
@@ -42,7 +42,7 @@ def test_format_text_multiple_files():
     assert lines[0] == "a.py:1: error [lint] syntax"
     assert lines[1] == "a.py:2: info [fmt] missing space"
     assert lines[2] == "b.py:5: warning [lint] unused var"
-    assert lines[3] == "3 finding(s) across 2 file(s)"
+    assert lines[3].startswith("3 findings in 2 files")
 
 
 def test_format_text_sorted_by_file_then_line():
@@ -60,7 +60,7 @@ def test_format_text_sorted_by_file_then_line():
     assert lines[0] == "a.py:1: info [c] a"
     assert lines[1] == "a.py:5: info [b] a"
     assert lines[2] == "z.py:10: info [a] z"
-    assert lines[3] == "3 finding(s) across 2 file(s)"
+    assert lines[3].startswith("3 findings in 2 files")
 
 
 def test_format_text_single_file_single_finding():
@@ -70,7 +70,7 @@ def test_format_text_single_file_single_finding():
     ]
     review = Review(findings=findings, files_reviewed=1)
     result = format_text(review)
-    assert result.endswith("1 finding across 1 file(s)")
+    assert result.endswith("1 finding in 1 file (1 reviewed)")
 
 
 def test_format_json_empty():

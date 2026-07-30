@@ -94,16 +94,19 @@ def test_main_check_filter_passed_to_run_checks(monkeypatch):
     monkeypatch.setattr("reviewbot.cli.collect_diff", fake_collect)
 
     # We need to patch run_checks too to inspect the enabled set.
-    def fake_run_checks(diffs, enabled=None):
-        collected.append(enabled)
+    def fake_run_checks(diffs, enabled=None, ignored=None, max_line_length=None):
+        collected.append((enabled, ignored, max_line_length))
         from reviewbot.models import Review
         return Review()
 
     monkeypatch.setattr("reviewbot.cli.run_checks", fake_run_checks)
 
-    main(["--check", "debug-print", "--check", "long-line"])
-    enabled = collected[0]
-    assert enabled == {"debug-print", "long-line"}
+    main(["--check", "debug-statement", "--check", "long-line",
+          "--ignore", "todo-comment", "--max-line-length", "80"])
+    enabled, ignored, limit = collected[0]
+    assert enabled == {"debug-statement", "long-line"}
+    assert ignored == {"todo-comment"}
+    assert limit == 80
 
 
 def test_main_json_format_calls_format_json(monkeypatch):

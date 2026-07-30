@@ -50,13 +50,17 @@ def format_text(review: Review) -> str:
         for finding in sorted(file_findings, key=lambda x: x.line):
             lines.append(_line_text(finding))
 
-    # Summary line
+    # Summary. "in N files" is the files that had findings; "of M reviewed" is
+    # how many were actually looked at - two different numbers that used to be
+    # conflated, so a diff of one .py and one .md claimed to have reviewed both.
     num_files = len(grouped)
     num_findings = len(review.findings)
-    if num_findings == 1:
-        lines.append(f"1 finding across {num_files} file(s)")
-    else:
-        lines.append(f"{num_findings} finding(s) across {num_files} file(s)")
+    noun = "finding" if num_findings == 1 else "findings"
+    fnoun = "file" if num_files == 1 else "files"
+    summary = f"{num_findings} {noun} in {num_files} {fnoun}"
+    if review.files_reviewed:
+        summary += f" ({review.files_reviewed} reviewed)"
+    lines.append(summary)
 
     return "\n".join(lines)
 
@@ -78,8 +82,10 @@ def format_json(review: Review) -> str:
     str
         JSON string with indent=2.
     """
+    # Sorted for the same reason the text report is: JSON that reorders between
+    # runs cannot be diffed, and this output is the machine-readable one.
     findings_list: list[dict[str, Any]] = []
-    for f in review.findings:
+    for f in sorted(review.findings, key=lambda x: (x.path, x.line, x.check)):
         findings_list.append({
             "path": f.path,
             "line": f.line,
