@@ -1,0 +1,159 @@
+solo run 20260729-115811-f903c5: ornith in /home/quinna/tools/orchestrator-p6
+events: /home/quinna/tools/orchestrator-p6/.pipeline-runs/20260729-115811-f903c5/events.jsonl
+2026-07-29 11:58:12,111 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:58:13,274 pipeline.solo INFO turn 1: 1 tool call(s), 0 content chars, 88 reasoning chars, tool_calls, 2s
+2026-07-29 11:58:13,275 pipeline.solo INFO   list_dir -> d  .git
+2026-07-29 11:58:13,306 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:58:15,023 pipeline.solo INFO turn 2: 2 tool call(s), 0 content chars, 73 reasoning chars, tool_calls, 2s
+2026-07-29 11:58:15,024 pipeline.solo INFO   list_dir -> d  __pycache__
+2026-07-29 11:58:15,024 pipeline.solo INFO   list_dir -> d  __pycache__
+2026-07-29 11:58:15,045 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:58:16,492 pipeline.solo INFO turn 3: 2 tool call(s), 0 content chars, 64 reasoning chars, tool_calls, 1s
+2026-07-29 11:58:16,493 pipeline.solo INFO   read_file -> """Wave-based execution of a Plan over isolated agent workspaces.
+2026-07-29 11:58:16,494 pipeline.solo INFO   read_file -> """Persisted pipeline state.
+2026-07-29 11:58:16,520 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:58:20,198 pipeline.solo INFO turn 4: 2 tool call(s), 0 content chars, 75 reasoning chars, tool_calls, 4s
+2026-07-29 11:58:20,199 pipeline.solo INFO   read_file ->    130:        chunk=chunk,
+2026-07-29 11:58:20,199 pipeline.solo INFO   read_file ->     85:
+2026-07-29 11:58:20,231 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:58:28,137 pipeline.solo INFO turn 5: 3 tool call(s), 56 content chars, 137 reasoning chars, tool_calls, 8s
+2026-07-29 11:58:28,138 pipeline.solo INFO   read_file -> """Tests for pipeline.executor: topological_waves (pure) and execute_plan."""
+2026-07-29 11:58:28,139 pipeline.solo INFO   read_file -> """Loads the `pipeline:` block out of the orchestrator's config.yaml.
+2026-07-29 11:58:28,140 pipeline.solo INFO   read_file -> """Entrypoint for the pipeline's workflows.
+2026-07-29 11:58:28,180 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:58:36,812 pipeline.solo INFO turn 6: 2 tool call(s), 43 content chars, 137 reasoning chars, tool_calls, 9s
+2026-07-29 11:58:36,813 pipeline.solo INFO   read_file ->     80:    """a→b, b→a raises, naming both members."""
+2026-07-29 11:58:36,813 pipeline.solo INFO   read_file -> """Shared dataclasses for the pipeline. No I/O here - pure data + a few
+2026-07-29 11:58:36,859 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:59:00,756 pipeline.solo INFO turn 7: 2 tool call(s), 68 content chars, 4492 reasoning chars, tool_calls, 24s
+2026-07-29 11:59:00,763 pipeline.solo INFO   grep -> /home/quinna/tools/orchestrator-p6/pipeline/cli.py:354:def _cmd_resume(args, pcfg) -> int:
+2026-07-29 11:59:00,767 pipeline.solo INFO   grep -> /home/quinna/tools/orchestrator-p6/pipeline/state.py:268:    def incomplete_chunks(self) -> list[ChunkOutcome]:
+2026-07-29 11:59:00,840 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:59:13,669 pipeline.solo INFO turn 8: 1 tool call(s), 0 content chars, 2303 reasoning chars, tool_calls, 13s
+2026-07-29 11:59:13,670 pipeline.solo INFO   read_file ->    354:def _cmd_resume(args, pcfg) -> int:
+2026-07-29 11:59:13,717 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:59:16,210 pipeline.solo INFO turn 9: 1 tool call(s), 0 content chars, 60 reasoning chars, tool_calls, 3s
+2026-07-29 11:59:16,584 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 11:59:16,633 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:59:22,785 pipeline.solo INFO turn 10: 1 tool call(s), 70 content chars, 266 reasoning chars, tool_calls, 6s
+2026-07-29 11:59:22,786 pipeline.solo INFO   edit_file -> edited /home/quinna/tools/orchestrator-p6/pipeline/executor.py (1 replacement)
+2026-07-29 11:59:22,837 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:59:27,258 pipeline.solo INFO turn 11: 1 tool call(s), 0 content chars, 391 reasoning chars, tool_calls, 4s
+2026-07-29 11:59:27,259 pipeline.solo INFO   edit_file -> edited /home/quinna/tools/orchestrator-p6/pipeline/executor.py (1 replacement)
+2026-07-29 11:59:27,311 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:59:28,658 pipeline.solo INFO turn 12: 1 tool call(s), 0 content chars, 75 reasoning chars, tool_calls, 1s
+2026-07-29 11:59:28,659 pipeline.solo INFO   read_file ->    275:    events.emit("chunk_finished", chunk=chunk.id, status=state.status.value,
+2026-07-29 11:59:28,713 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:08,394 pipeline.solo INFO turn 13: 1 tool call(s), 97 content chars, 3522 reasoning chars, tool_calls, 40s
+2026-07-29 12:00:08,396 pipeline.solo INFO   edit_file -> edited /home/quinna/tools/orchestrator-p6/pipeline/executor.py (1 replacement)
+2026-07-29 12:00:08,454 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:11,899 pipeline.solo INFO turn 14: 1 tool call(s), 0 content chars, 122 reasoning chars, tool_calls, 4s
+2026-07-29 12:00:11,900 pipeline.solo INFO   read_file -> """Wave-based execution of a Plan over isolated agent workspaces.
+2026-07-29 12:00:11,959 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:22,080 pipeline.solo INFO turn 15: 1 tool call(s), 46 content chars, 206 reasoning chars, tool_calls, 10s
+2026-07-29 12:00:22,082 pipeline.solo INFO   edit_file -> edited /home/quinna/tools/orchestrator-p6/pipeline/executor.py (1 replacement)
+2026-07-29 12:00:22,143 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:25,310 pipeline.solo INFO turn 16: 1 tool call(s), 0 content chars, 147 reasoning chars, tool_calls, 3s
+2026-07-29 12:00:25,402 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 12:00:25,463 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:33,724 pipeline.solo INFO turn 17: 1 tool call(s), 0 content chars, 864 reasoning chars, tool_calls, 8s
+2026-07-29 12:00:33,725 pipeline.solo INFO   edit_file -> error: '    # Persist state after every transition — a run that dies is the one we\n    # need the state for. Never take
+2026-07-29 12:00:33,789 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:35,622 pipeline.solo INFO turn 18: 1 tool call(s), 0 content chars, 135 reasoning chars, tool_calls, 2s
+2026-07-29 12:00:35,624 pipeline.solo INFO   read_file ->    390:                outcome = ChunkOutcome(
+2026-07-29 12:00:35,686 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:37,763 pipeline.solo INFO turn 19: 1 tool call(s), 0 content chars, 126 reasoning chars, tool_calls, 2s
+2026-07-29 12:00:38,041 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 12:00:38,106 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:39,881 pipeline.solo INFO turn 20: 1 tool call(s), 0 content chars, 99 reasoning chars, tool_calls, 2s
+2026-07-29 12:00:39,882 pipeline.solo INFO   read_file ->     30:from .client import OrchestratorClient
+2026-07-29 12:00:39,974 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:41,806 pipeline.solo INFO turn 21: 1 tool call(s), 54 content chars, 109 reasoning chars, tool_calls, 2s
+2026-07-29 12:00:41,807 pipeline.solo INFO   glob -> (empty)
+2026-07-29 12:00:41,875 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:44,900 pipeline.solo INFO turn 22: 1 tool call(s), 84 content chars, 371 reasoning chars, tool_calls, 3s
+2026-07-29 12:00:44,905 pipeline.solo INFO   grep -> /home/quinna/tools/orchestrator-p6/pipeline/cli.py:215:async def run_pipeline(config: RunConfig, load_wait_s: float, eve
+2026-07-29 12:00:44,975 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:47,201 pipeline.solo INFO turn 23: 2 tool call(s), 0 content chars, 89 reasoning chars, tool_calls, 2s
+2026-07-29 12:00:47,202 pipeline.solo INFO   read_file ->    215:async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog) -> RunReport:
+2026-07-29 12:00:47,203 pipeline.solo INFO   read_file -> from __future__ import annotations
+2026-07-29 12:00:47,297 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:00:52,419 pipeline.solo INFO turn 24: 1 tool call(s), 80 content chars, 729 reasoning chars, tool_calls, 5s
+2026-07-29 12:00:52,670 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 12:00:52,741 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:01:45,809 pipeline.solo INFO turn 25: 1 tool call(s), 0 content chars, 961 reasoning chars, tool_calls, 53s
+2026-07-29 12:01:45,810 pipeline.solo INFO   write_file -> wrote 11803 chars to /home/quinna/tools/orchestrator-p6/tests/test_pipeline_state.py
+2026-07-29 12:01:45,884 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:01:49,246 pipeline.solo INFO turn 26: 1 tool call(s), 0 content chars, 93 reasoning chars, tool_calls, 3s
+2026-07-29 12:01:49,252 pipeline.solo INFO   grep -> /home/quinna/tools/orchestrator-p6/pipeline/events.py:98:    def token_totals(path: str | Path) -> dict[str, dict[str, i
+2026-07-29 12:01:49,328 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:01:52,895 pipeline.solo INFO turn 27: 1 tool call(s), 0 content chars, 548 reasoning chars, tool_calls, 4s
+2026-07-29 12:01:53,093 pipeline.solo INFO   run_shell -> exit code: 1
+2026-07-29 12:01:53,171 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:01:57,699 pipeline.solo INFO turn 28: 1 tool call(s), 0 content chars, 706 reasoning chars, tool_calls, 5s
+2026-07-29 12:01:57,701 pipeline.solo INFO   read_file -> """Append-only JSONL event log for a run.
+2026-07-29 12:01:57,781 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:02:18,011 pipeline.solo INFO turn 29: 1 tool call(s), 49 content chars, 2542 reasoning chars, tool_calls, 20s
+2026-07-29 12:02:18,013 pipeline.solo INFO   edit_file -> edited /home/quinna/tools/orchestrator-p6/tests/test_pipeline_state.py (1 replacement)
+2026-07-29 12:02:18,097 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:02:21,211 pipeline.solo INFO turn 30: 1 tool call(s), 0 content chars, 184 reasoning chars, tool_calls, 3s
+2026-07-29 12:02:21,406 pipeline.solo INFO   run_shell -> exit code: 1
+2026-07-29 12:02:21,489 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:02:29,662 pipeline.solo INFO turn 31: 1 tool call(s), 89 content chars, 351 reasoning chars, tool_calls, 8s
+2026-07-29 12:02:29,664 pipeline.solo INFO   edit_file -> edited /home/quinna/tools/orchestrator-p6/tests/test_pipeline_state.py (1 replacement)
+2026-07-29 12:02:29,749 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:02:35,751 pipeline.solo INFO turn 32: 1 tool call(s), 0 content chars, 299 reasoning chars, tool_calls, 6s
+2026-07-29 12:02:35,752 pipeline.solo INFO   edit_file -> edited /home/quinna/tools/orchestrator-p6/tests/test_pipeline_state.py (1 replacement)
+2026-07-29 12:02:35,839 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:02:40,012 pipeline.solo INFO turn 33: 1 tool call(s), 0 content chars, 621 reasoning chars, tool_calls, 4s
+2026-07-29 12:02:40,196 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 12:02:40,281 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:02:43,787 pipeline.solo INFO turn 34: 1 tool call(s), 62 content chars, 276 reasoning chars, tool_calls, 4s
+2026-07-29 12:02:43,922 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 12:02:44,009 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:02:47,314 pipeline.solo INFO turn 35: 1 tool call(s), 0 content chars, 249 reasoning chars, tool_calls, 3s
+2026-07-29 12:04:28,049 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 12:04:28,137 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:04:33,084 pipeline.solo INFO turn 36: 1 tool call(s), 272 content chars, 397 reasoning chars, tool_calls, 5s
+2026-07-29 12:06:13,777 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 12:06:13,869 httpx INFO HTTP Request: POST http://127.0.0.1:8091/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 12:06:27,556 pipeline.solo INFO turn 37: 0 tool call(s), 1769 content chars, 1218 reasoning chars, stop, 14s
+
+=== solo 20260729-115811-f903c5 ===
+model: ornith  stop_reason: finished  turns: 37  tool calls: 44
+tokens: 0 prompt / 0 completion  (8.3 min)
+
+All verification complete.
+
+## Summary of changes
+
+### `pipeline/executor.py`
+
+1. **Defined `STATE_PATH = "state.json"`** at module level (was missing — caused `NameError` at the end of every `execute_plan` call).
+
+2. **Added `_save_run_state` helper** that wraps `save_state` with the correct 7-argument signature: `(path, run_id, task, repo, plan, outcomes, base_commit)`. The task now comes from `config.task` (not hardcoded `""`) and the repo from `config.repo` (was missing entirely). All calls are wrapped in `try/except` so state persistence never takes down a run.
+
+3. **Persist state after every transition**, not just once at the end:
+   - After each SKIPPED chunk outcome during wave processing
+   - After each chunk outcome is recorded (after a wave completes)
+   - The comment above the original single call is preserved (now matches reality)
+
+### `tests/test_pipeline_state.py` (new file, 18 tests)
+
+- Round-trip with `depends_on` and mixed statuses (COMPLETED, FAILED, SKIPPED)
+- Atomic write: no partial `.tmp` or `state.json` left after a failed save
+- `load_state` raises `StateCorruptError` on missing file, truncated file, garbage bytes, and missing required fields
+- `find_runs` orders newest-first by mtime, tolerates dirs without state.json, corrupt state.json, and missing directory
+- `incomplete_chunks` returns exactly non-COMPLETED chunks
+- A SKIPPED chunk whose dependency is now COMPLETED is still selected for resume
+- `EventLog.token_totals` surfaces `unreported_calls`
+
+### Verification
+
+```
+22 failed, 201 passed in 100.50s
+```
+
+- All 13 `test_pipeline_executor.py` tests pass ✓
+- All 18 new `test_pipeline_state.py` tests pass ✓
+- All 22 failures are in `test_pipeline_tools.py` (pre-existing, async issues we were told not to touch) ✓
