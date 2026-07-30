@@ -50,7 +50,7 @@ def test_usage_totals_per_model(tmp_path):
 
     totals = EventLog.token_totals(log.path)
     assert totals["ornith"] == {"prompt_tokens": 150, "completion_tokens": 25,
-                                "calls": 2, "unreported_calls": 0}
+                                "calls": 2, "unreported_calls": 0, "estimated_calls": 0}
     assert totals["ds4-full"]["completion_tokens"] == 400
 
 

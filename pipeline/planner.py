@@ -7,7 +7,9 @@ from __future__ import annotations
 import logging
 
 from .client import OrchestratorClient
+from .events import EventLog, NullEventLog
 from .models import Plan, PlanChunk, RunConfig
+from .tokens import estimate_usage
 from .tools import READ_ONLY_TOOL_SCHEMAS, execute_tool
 
 log = logging.getLogger("pipeline.planner")
@@ -22,7 +24,9 @@ SUBMIT_PLAN_TOOL = {
                        "be implemented in parallel within each wave. Chunks in the same wave run "
                        "simultaneously from the same base commit. Chunks that genuinely depend "
                        "on the output of another chunk must declare that ordering via the "
-                       "depends_on field so they run in a later wave.",
+                       "depends_on field so they run in a later wave. Each chunk is a vertical "
+                       "slice - implementation plus its own tests - never a separate "
+                       "test-writing or verification step.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -79,12 +83,32 @@ def _system_prompt(config: RunConfig) -> str:
         "ordering via the `depends_on` field listing the chunk ids it must wait for. Do NOT merge "
         "dependent chunks into a single chunk just to avoid declaring an edge - that throws away "
         "the parallelism you could still get. If the entire task is small enough that it does not "
-        "benefit from splitting at all, submit a single chunk with no dependencies."
+        "benefit from splitting at all, submit a single chunk with no dependencies.\n\n"
+        "Three rules about how NOT to split, each of which produces a plan that looks reasonable "
+        "and then fails:\n\n"
+        "1. Split by FEATURE, never by ACTIVITY. Every chunk must be a vertical slice that is "
+        "complete on its own: its implementation, its tests, and any registration or wiring it "
+        "needs. Never create one chunk that writes code and another that writes the tests for that "
+        "code. The test-writing agent cannot see the code it is testing (same wave) or can only "
+        "guess at it (later wave), so it invents an API that does not match, and neither agent ever "
+        "runs a test that fails. The same applies to 'add types', 'add docstrings', 'add error "
+        "handling' as separate chunks - those are activities, not features.\n\n"
+        "2. Never create a chunk whose job is to verify, test, integrate, review, or 'tie together' "
+        "the other chunks. The harness already merges every chunk and runs the project's "
+        "verification command afterwards. Such a chunk has no files to write, produces an empty "
+        "diff, and simply burns an agent.\n\n"
+        "3. If two chunks would both edit the same file, they conflict. Either give one chunk sole "
+        "ownership of that file, or make the second `depends_on` the first. A shared registry, "
+        "`__init__.py`, or config file that every chunk must append to belongs to exactly one "
+        "chunk - usually the first - and the others declare a dependency on it."
         f"{cap_note}"
     )
 
 
-async def create_plan(client: OrchestratorClient, config: RunConfig) -> Plan:
+async def create_plan(client: OrchestratorClient, config: RunConfig,
+                      events: EventLog | None = None) -> Plan:
+    events = events or NullEventLog()
+    model = config.model_for("planner")
     messages = [
         {"role": "system", "content": _system_prompt(config)},
         {"role": "user", "content": config.task},
@@ -98,10 +122,18 @@ async def create_plan(client: OrchestratorClient, config: RunConfig) -> Plan:
             if forced_final else "auto"
         )
         completion = await client.chat_once(
-            config.model_for("planner"), messages, tools=tools,
+            model, messages, tools=tools,
             tool_choice=tool_choice, max_tokens=config.max_tokens,
         )
         message = completion["choices"][0]["message"]
+        usage = completion.get("usage")
+        events.emit_usage(
+            "planner", model, usage,
+            estimate=None if usage else estimate_usage(
+                messages, message.get("content") or "",
+            ),
+            turn=turn + 1,
+        )
         messages.append(message)
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:
@@ -118,7 +150,22 @@ async def create_plan(client: OrchestratorClient, config: RunConfig) -> Plan:
             fn = call["function"]
             name = fn["name"]
             if name == "submit_plan":
-                return _parse_plan(fn["arguments"])
+                plan = _parse_plan(fn["arguments"])
+                problem = _plan_structure_error(plan)
+                if problem is None:
+                    return plan
+                # A structurally impossible plan used to take the whole run down
+                # with a ValueError from topological_waves, throwing away every
+                # exploration turn that produced it. The planner is the one thing
+                # that can fix it, and it is still right here.
+                log.warning("rejecting submitted plan: %s", problem)
+                events.emit("plan_rejected", turn=turn + 1, reason=problem)
+                messages.append({
+                    "role": "tool", "tool_call_id": call["id"],
+                    "content": f"This plan cannot be executed: {problem}\n\n"
+                               f"Fix that and call submit_plan again.",
+                })
+                break
             import json
             try:
                 arguments = json.loads(fn["arguments"]) if isinstance(fn["arguments"], str) else fn["arguments"]
@@ -127,7 +174,35 @@ async def create_plan(client: OrchestratorClient, config: RunConfig) -> Plan:
             result = await execute_tool(name, arguments, config.repo, run_shell_timeout_s=0)
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
 
-    raise RuntimeError(f"ds4-full did not submit a plan within {MAX_EXPLORATION_TURNS} turns")
+    raise RuntimeError(f"{model} did not submit a usable plan within {MAX_EXPLORATION_TURNS} turns")
+
+
+def _plan_structure_error(plan: Plan) -> str | None:
+    """Whatever makes this plan unexecutable, phrased for the planner to act on.
+
+    Only checks what genuinely cannot run - a duplicate id, a dangling or
+    self-referential edge, a cycle. Judgements about whether the *split* is good
+    belong in the prompt, not here: rejecting a plan a human would accept costs
+    a whole exploration round-trip."""
+    from .executor import topological_waves  # local: executor imports models, not planner
+
+    seen: set[str] = set()
+    for chunk in plan.chunks:
+        if chunk.id in seen:
+            return f"chunk id {chunk.id!r} appears more than once; ids must be unique"
+        seen.add(chunk.id)
+    for chunk in plan.chunks:
+        for dep in chunk.depends_on:
+            if dep == chunk.id:
+                return f"chunk {chunk.id!r} lists itself in depends_on"
+            if dep not in seen:
+                return (f"chunk {chunk.id!r} depends on {dep!r}, which is not a chunk in this "
+                        f"plan (the ids you submitted are: {', '.join(sorted(seen))})")
+    try:
+        topological_waves(plan.chunks)
+    except ValueError as e:
+        return str(e)
+    return None
 
 
 def _parse_plan(raw_arguments) -> Plan:

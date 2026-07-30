@@ -19,8 +19,10 @@ from pathlib import Path
 
 from ._procutil import run_argv
 from .client import OrchestratorClient
+from .events import EventLog, NullEventLog
 from .executor import topological_waves
 from .models import AgentStatus, ChunkOutcome, Plan, RunConfig
+from .tokens import estimate_usage
 from .tools import TOOL_SCHEMAS, execute_tool
 from .verify import run_verify
 from .workspace import (
@@ -102,11 +104,13 @@ async def merge(
     plan: Plan,
     outcomes: list[ChunkOutcome],
     base_commit: str,
+    events: EventLog | None = None,
 ) -> tuple[str | None, str]:
     """Deterministic sequential merge.
 
     Returns (new_commit_or_None, summary).
     """
+    events = events or NullEventLog()
     # --- topological order of chunk ids ---
     waves = topological_waves(plan.chunks)
     topo_ids: list[str] = []
@@ -220,7 +224,7 @@ async def merge(
         record["status"] = "escalated"
         resolved = await _resolve_escalation(
             client, config, outcome, conflict_info, verify_info,
-            base_commit=base_commit,
+            base_commit=base_commit, events=events,
         )
 
         if resolved:
@@ -266,6 +270,7 @@ async def _resolve_escalation(
     conflict_info: str | None,
     verify_info: str | None,
     base_commit: str = "",
+    events: EventLog | None = None,
 ) -> str | None:
     """Give the model a scoped prompt for one chunk's conflict/verify failure.
 
@@ -293,6 +298,8 @@ async def _resolve_escalation(
         {"role": "user", "content": user_content},
     ]
     tools = TOOL_SCHEMAS + [FINISH_MERGE_TOOL]
+    events = events or NullEventLog()
+    model = config.model_for("merger")
     summary = ""
     done = False
 
@@ -302,10 +309,18 @@ async def _resolve_escalation(
             {"type": "function", "function": {"name": "finish_merge"}} if forced_final else "auto"
         )
         completion = await client.chat_once(
-            config.model_for("merger"), messages, tools=tools,
+            model, messages, tools=tools,
             tool_choice=tool_choice, max_tokens=config.max_tokens,
         )
         message = completion["choices"][0]["message"]
+        usage = completion.get("usage")
+        events.emit_usage(
+            "merger", model, usage,
+            estimate=None if usage else estimate_usage(
+                messages, message.get("content") or "",
+            ),
+            chunk=outcome.chunk.id, turn=turn + 1,
+        )
         messages.append(message)
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:

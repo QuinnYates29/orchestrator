@@ -70,12 +70,15 @@ class FakeExploreClient:
                 }
                 for tc in tool_calls
             ]
-        choice = {"message": message, "usage": usage or {}}
-        return {"choices": [choice]}
+        # `usage` is a sibling of `choices`, not a member of one. This fixture
+        # used to nest it inside the choice, which is exactly where the code
+        # under test was (wrongly) reading it from - so the two agreed with each
+        # other and the token counts were silently always zero in production.
+        return {"choices": [{"message": message}], "usage": usage or {}}
 
     @staticmethod
     def _content_only(content):
-        return {"choices": [{"message": {"role": "assistant", "content": content}, "usage": {}}]}
+        return {"choices": [{"message": {"role": "assistant", "content": content}}], "usage": {}}
 
 
 def _run(coro):

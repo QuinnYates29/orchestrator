@@ -27,9 +27,14 @@ import httpx
 from .client import OrchestratorClient, OrchestratorError
 from .config import PipelineCfg
 from .events import EventLog, NullEventLog
+from .tokens import estimate_usage
 from .tools import TOOL_SCHEMAS, ProcessTimeout, execute_tool
 
 log = logging.getLogger("pipeline.solo")
+
+# See worker.TURN_WARNING_LEAD - same reasoning, except a solo agent has no
+# workspace commit to fall back on, so running out of turns is worse here.
+TURN_WARNING_LEAD = 10
 
 
 @dataclass
@@ -43,6 +48,16 @@ class SoloResult:
     completion_tokens: int = 0
     duration_s: float = 0.0
     messages: list[dict] = field(default_factory=list)
+
+
+def _turn_warning(turns_left: int) -> str:
+    return (
+        f"Budget warning: you have {turns_left} turns left before you are stopped. "
+        f"Stop exploring and start landing what you have: finish the edit you are "
+        f"making, run the tests once, and write your final summary. If part of the "
+        f"task is unfinished, say so plainly in that summary rather than implying "
+        f"you completed it."
+    )
 
 
 EMPTY_TURN_NUDGE = (
@@ -90,12 +105,22 @@ async def run_solo(
     ]
     result = SoloResult(ok=False, turns=0, messages=messages)
     empty_turns = 0
+    warned_about_turns = False
+    warn_at_turn = max(1, max_turns - TURN_WARNING_LEAD)
 
     events.emit("solo_start", model=model, repo=str(repo), max_turns=max_turns)
 
     while result.turns < max_turns:
         result.turns += 1
         turn_started = time.monotonic()
+
+        if not warned_about_turns and result.turns >= warn_at_turn:
+            warned_about_turns = True
+            turns_left = max_turns - result.turns + 1
+            log.info("%d turns left, telling the agent to land the work", turns_left)
+            events.emit("turn_budget_warning", turn=result.turns, turns_left=turns_left)
+            messages.append({"role": "user", "content": _turn_warning(turns_left)})
+
         tool_calls: list[dict] = []
         content = ""
         reasoning_chars = 0
@@ -163,7 +188,11 @@ async def run_solo(
         if usage:
             result.prompt_tokens += int(usage.get("prompt_tokens") or 0)
             result.completion_tokens += int(usage.get("completion_tokens") or 0)
-        events.emit_usage("solo", model, usage, turn=result.turns)
+        events.emit_usage(
+            "solo", model, usage,
+            estimate=None if usage else estimate_usage(messages, content, reasoning_chars),
+            turn=result.turns,
+        )
 
         assistant: dict = {"role": "assistant", "content": content or None}
         if tool_calls:

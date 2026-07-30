@@ -159,6 +159,13 @@ class OrchestratorClient:
     def _build_body(self, model: str, messages: list[dict], *, tools, tool_choice,
                      max_tokens, temperature, stream: bool, **extra) -> dict:
         body: dict = {"model": model, "messages": messages, "stream": stream}
+        if stream:
+            # Without this, an OpenAI-compatible server sends no usage at all on a
+            # stream - which is why every token figure in the event log used to be
+            # `reported: false`. It was never a backend limitation; the flag was
+            # simply never sent. Both ds4-server and llama-server honour it, and
+            # `extra` overrides it below for any backend that rejects the field.
+            body["stream_options"] = {"include_usage": True}
         if tools:
             body["tools"] = tools
         if tool_choice is not None:

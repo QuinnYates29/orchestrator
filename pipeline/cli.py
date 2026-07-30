@@ -246,7 +246,7 @@ async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog,
             # ensure_model_resident resolves profile-vs-backend properly.
             if ensure_resident:
                 await ensure_model_resident(client, roles["planner"], load_wait_s)
-            plan = await create_plan(client, config)
+            plan = await create_plan(client, config, events)
             events.emit("plan", chunks=[{"id": c.id, "title": c.title} for c in plan.chunks])
 
         if base_commit is None:
@@ -270,7 +270,7 @@ async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog,
                  succeeded, len(outcomes), roles["merger"])
         if ensure_resident:
             await ensure_model_resident(client, roles["merger"], load_wait_s)
-        merge_commit, merge_summary = await merge(client, config, plan, outcomes, base_commit)
+        merge_commit, merge_summary = await merge(client, config, plan, outcomes, base_commit, events)
         events.emit("run_end", succeeded=succeeded, total=len(outcomes), merge_commit=merge_commit)
 
         if not config.keep_scratch:
@@ -501,10 +501,18 @@ def _format_tokens(totals: dict[str, dict[str, int]]) -> str:
         completion = int(data["completion_tokens"] or 0)
         total = prompt + completion
         calls = int(data["calls"] or 0)
-        unreported = int(data["unreported_calls"] or 0)
-        if unreported:
-            parts.append(f"{model}: ≥ {total:,} tokens ({calls - unreported + unreported} calls, "
-                         f"{unreported} unreported)")
+        unreported = int(data.get("unreported_calls") or 0)
+        estimated = int(data.get("estimated_calls") or 0)
+        # Three different numbers wear the same shape, so say which one this is:
+        # counted by the backend, approximated by us, or a floor with calls
+        # missing from it entirely.
+        uncounted = unreported - estimated
+        if uncounted > 0:
+            parts.append(f"{model}: ≥ {total:,} tokens ({calls} calls, "
+                         f"{uncounted} not counted)")
+        elif estimated:
+            parts.append(f"{model}: ~{total:,} tokens ({calls} calls, "
+                         f"{estimated} estimated)")
         else:
             parts.append(f"{model}: {total:,} tokens ({calls} calls)")
     return "  |  ".join(parts)

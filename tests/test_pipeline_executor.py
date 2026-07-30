@@ -165,7 +165,7 @@ def test_execute_plan_no_deps_all_complete(tmp_path):
         state_b.tool_call_log = []
         
         # run_agent mutates state in place, so we need to set it up
-        async def fake_run_agent(client, config, plan, state):
+        async def fake_run_agent(client, config, plan, state, events=None):
             state.status = AgentStatus.COMPLETED
             state.finished_at = 1234567890
             state.turns = 5
@@ -211,7 +211,7 @@ def test_execute_plan_wave_dependency(tmp_path):
         
         execution_order = []
         
-        async def fake_run_agent(client, config, plan, state):
+        async def fake_run_agent(client, config, plan, state, events=None):
             # Track when this chunk starts
             execution_order.append(("start", state.chunk.id))
             await asyncio.sleep(0.01)  # Simulate some work
@@ -263,7 +263,7 @@ def test_execute_plan_dependency_failure_skips_downstream(tmp_path):
         
         call_count = 0
         
-        async def fake_run_agent(client, config, plan, state):
+        async def fake_run_agent(client, config, plan, state, events=None):
             nonlocal call_count
             call_count += 1
             if state.chunk.id == "a":
@@ -325,7 +325,7 @@ def test_execute_plan_semaphore_caps_concurrency(tmp_path):
         current_in_flight = 0
         peak_in_flight = 0
         
-        async def fake_run_agent(client, config, plan, state):
+        async def fake_run_agent(client, config, plan, state, events=None):
             nonlocal current_in_flight, peak_in_flight
             current_in_flight += 1
             peak_in_flight = max(peak_in_flight, current_in_flight)

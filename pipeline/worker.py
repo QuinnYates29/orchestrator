@@ -18,12 +18,21 @@ import logging
 import time
 
 from .client import OrchestratorClient
+from .events import EventLog, NullEventLog
 from .models import AgentState, AgentStatus, Plan, PlanChunk, RunConfig, ToolCallRecord
+from .tokens import estimate_usage
 from .tools import SUBMIT_WORK_TOOL, TOOL_SCHEMAS, ProcessTimeout, execute_tool
 from .verify import run_verify
 from .workspace import finalize_agent_commit
 
 log = logging.getLogger("pipeline.worker")
+
+# How many turns before the ceiling the agent is told to start landing the work.
+# An agent that hits max_agent_turns is killed mid-thought and its chunk is a
+# total loss, even though the useful 80% of the work is sitting in its
+# workspace uncommitted-as-finished. Ten turns is enough to write what it has,
+# run the tests once, and call submit_work.
+TURN_WARNING_LEAD = 10
 
 
 def build_initial_messages(chunk: PlanChunk, plan: Plan, retry_context: str = "") -> list[dict]:
@@ -55,6 +64,21 @@ def _build_nudge_message() -> dict:
     }
 
 
+def _build_turn_warning_message(turns_left: int) -> dict:
+    return {
+        "role": "user",
+        "content": (
+            f"Budget warning: you have {turns_left} turns left before this agent is "
+            f"stopped, and work that has not been submitted is discarded. Stop "
+            f"exploring and start landing what you have: finish the file you are "
+            f"editing, run the tests once, and call `submit_work`. If part of the "
+            f"chunk is not done, submit anyway and say plainly in the summary what "
+            f"is missing - a partial chunk that is submitted is worth far more than "
+            f"a complete one that is not."
+        ),
+    }
+
+
 def _build_verify_failure_message(command: str, exit_code: int | None, output_tail: str) -> dict:
     return {
         "role": "user",
@@ -79,11 +103,18 @@ def _build_submit_verify_prompt(verify_cfg) -> str:
     )
 
 
-async def run_agent(client: OrchestratorClient, config: RunConfig, plan: Plan, state: AgentState) -> None:
+async def run_agent(client: OrchestratorClient, config: RunConfig, plan: Plan, state: AgentState,
+                    events: EventLog | None = None) -> None:
     """Runs the agent loop for `state` to a terminal status. Mutates `state`
     in place; does not return it (the caller already holds the reference)."""
+    events = events or NullEventLog()
+    model = config.model_for("worker")
     state.status = AgentStatus.RUNNING
     no_tool_streak = 0
+    warned_about_turns = False
+    # Warn with TURN_WARNING_LEAD turns to spare; on a budget too small for that
+    # lead, warn on the first turn rather than not at all.
+    warn_at_turn = max(1, config.max_agent_turns - TURN_WARNING_LEAD)
 
     try:
         # Append verification instructions to the system message
@@ -95,19 +126,38 @@ async def run_agent(client: OrchestratorClient, config: RunConfig, plan: Plan, s
             state.turns += 1
             state.reasoning_buffer = ""  # this turn's live thinking - reset per turn, not cumulative
 
+            if not warned_about_turns and state.turns >= warn_at_turn:
+                warned_about_turns = True
+                turns_left = config.max_agent_turns - state.turns + 1
+                log.info("%s: %d turns left, telling it to land the work", state.label, turns_left)
+                events.emit("turn_budget_warning", chunk=state.chunk.id,
+                            turn=state.turns, turns_left=turns_left)
+                state.messages.append(_build_turn_warning_message(turns_left))
+
             tool_calls: list[dict] = []
             assistant_content = ""
+            usage: dict | None = None
 
             async for event in client.chat_stream(
-                config.model_for("worker"), state.messages, tools=TOOL_SCHEMAS + [SUBMIT_WORK_TOOL],
+                model, state.messages, tools=TOOL_SCHEMAS + [SUBMIT_WORK_TOOL],
                 tool_choice="auto", max_tokens=config.max_tokens,
             ):
                 if event.reasoning_delta:
                     state.reasoning_buffer += event.reasoning_delta
                 if event.content_delta:
                     assistant_content += event.content_delta
+                if event.usage:
+                    usage = event.usage
                 if event.finish_reason and event.tool_calls:
                     tool_calls = event.tool_calls
+
+            events.emit_usage(
+                "worker", model, usage,
+                estimate=None if usage else estimate_usage(
+                    state.messages, assistant_content, len(state.reasoning_buffer),
+                ),
+                chunk=state.chunk.id, turn=state.turns,
+            )
 
             assistant_msg: dict = {"role": "assistant", "content": assistant_content or None}
             if tool_calls:

@@ -32,6 +32,7 @@ from pathlib import Path
 from .client import OrchestratorClient, OrchestratorError
 from .config import PipelineCfg
 from .events import EventLog, NullEventLog
+from .tokens import estimate_usage
 from .tools import READ_ONLY_TOOL_SCHEMAS, execute_tool
 
 log = logging.getLogger("pipeline.explore")
@@ -148,10 +149,14 @@ async def _stage_split(
                         body=str(e.body))
             raise
         message = completion["choices"][0]["message"]
-        usage = completion["choices"][0].get("usage") or {}
+        usage = completion.get("usage") or {}
         split_prompt_tokens += int(usage.get("prompt_tokens") or 0)
         split_completion_tokens += int(usage.get("completion_tokens") or 0)
-        events.emit_usage("explore_split", model, usage, turn=turn)
+        events.emit_usage(
+            "explore_split", model, usage,
+            estimate=None if usage else estimate_usage(messages, message.get("content") or ""),
+            turn=turn,
+        )
         messages.append(message)
 
         tool_calls = message.get("tool_calls") or []
@@ -252,11 +257,14 @@ async def _run_single_agent(
                 return result
 
             message = completion["choices"][0]["message"]
-            usage = completion["choices"][0].get("usage") or {}
+            usage = completion.get("usage") or {}
             result.prompt_tokens += int(usage.get("prompt_tokens") or 0)
             result.completion_tokens += int(usage.get("completion_tokens") or 0)
-            events.emit_usage("explore_agent", model, usage, turn=turn,
-                              sub_question=sub_question[:100])
+            events.emit_usage(
+                "explore_agent", model, usage,
+                estimate=None if usage else estimate_usage(messages, message.get("content") or ""),
+                turn=turn, sub_question=sub_question[:100],
+            )
 
             assistant: dict = {"role": "assistant", "content": message.get("content") or ""}
             if message.get("tool_calls"):
@@ -371,10 +379,13 @@ async def _stage_synthesize(
         raise
 
     answer = completion["choices"][0]["message"].get("content", "")
-    usage = completion["choices"][0].get("usage") or {}
+    usage = completion.get("usage") or {}
     syn_prompt_tokens += int(usage.get("prompt_tokens") or 0)
     syn_completion_tokens += int(usage.get("completion_tokens") or 0)
-    events.emit_usage("explore_synthesize", model, usage)
+    events.emit_usage(
+        "explore_synthesize", model, usage,
+        estimate=None if usage else estimate_usage(messages, answer),
+    )
 
     events.emit("explore_synthesize_done", sub_question_count=len(sub_answers),
                 answer_chars=len(answer))

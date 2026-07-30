@@ -233,3 +233,111 @@ def test_two_consecutive_no_tool_calls_fails_after_nudge(tmp_path):
     _run(run_agent(client, config, plan, state))
     assert state.status == AgentStatus.FAILED
     assert "agent stopped producing tool calls" in state.kill_reason
+
+
+# --- Turn-budget warning ---
+
+def _run_shell_stub_turns(n):
+    """n turns of a harmless tool call, so the agent neither finishes nor
+    triggers the no-tool-call failure path."""
+    return [("", [{"id": f"c{i}", "name": "list_dir", "arguments": {"path": "."}}])
+            for i in range(n)]
+
+
+def test_agent_is_warned_before_the_turn_ceiling(tmp_path):
+    """An agent that hits max_agent_turns loses the whole chunk. It gets told
+    to land the work while there is still budget to do it."""
+    plan = Plan(chunks=[_chunk()])
+    chunk = plan.chunks[0]
+    state = _make_state(chunk)
+    state.messages = _make_initial_messages(chunk, plan)
+    state.workspace = tmp_path
+    config = _make_config(tmp_path)
+    config.max_agent_turns = 12   # lead is 10, so the warning lands on turn 2
+
+    client = FakeClient(_run_shell_stub_turns(12))
+    _run(run_agent(client, config, plan, state))
+
+    warnings = [m for m in state.messages
+                if m.get("role") == "user" and "Budget warning" in (m.get("content") or "")]
+    assert len(warnings) == 1, "the warning must fire exactly once, not every turn"
+    assert "submit_work" in warnings[0]["content"]
+
+
+def test_turn_warning_lands_with_budget_left_to_act_on_it(tmp_path):
+    """A warning delivered on the final turn is useless - check where it lands."""
+    plan = Plan(chunks=[_chunk()])
+    chunk = plan.chunks[0]
+    state = _make_state(chunk)
+    state.messages = _make_initial_messages(chunk, plan)
+    state.workspace = tmp_path
+    config = _make_config(tmp_path)
+    config.max_agent_turns = 12
+
+    turns_at_warning = []
+
+    class WatchingClient(FakeClient):
+        async def chat_stream(self, model, messages, **kwargs):
+            if any("Budget warning" in (m.get("content") or "") for m in messages):
+                turns_at_warning.append(state.turns)
+            async for ev in super().chat_stream(model, messages, **kwargs):
+                yield ev
+
+    _run(run_agent(WatchingClient(_run_shell_stub_turns(12)), config, plan, state))
+    assert turns_at_warning[0] == 2          # 12 - TURN_WARNING_LEAD
+    assert config.max_agent_turns - turns_at_warning[0] == 10
+
+
+def test_short_budget_still_gets_a_warning(tmp_path):
+    """With fewer turns than the lead, warn immediately rather than never."""
+    plan = Plan(chunks=[_chunk()])
+    chunk = plan.chunks[0]
+    state = _make_state(chunk)
+    state.messages = _make_initial_messages(chunk, plan)
+    state.workspace = tmp_path
+    config = _make_config(tmp_path)
+    config.max_agent_turns = 3
+
+    _run(run_agent(FakeClient(_run_shell_stub_turns(3)), config, plan, state))
+    assert any("Budget warning" in (m.get("content") or "")
+               for m in state.messages if m.get("role") == "user")
+
+
+def test_agent_that_finishes_early_is_never_warned(tmp_path):
+    plan = Plan(chunks=[_chunk()])
+    chunk = plan.chunks[0]
+    state = _make_state(chunk)
+    state.messages = _make_initial_messages(chunk, plan)
+    state.workspace = tmp_path
+    config = _make_config(tmp_path)
+    config.max_agent_turns = 60
+
+    submit_args = {"summary": "done", "files_changed": [], "verified": "", "blocked": ""}
+    _run(run_agent(FakeClient([("", [{"id": "s1", "name": "submit_work", "arguments": submit_args}])]),
+                   config, plan, state))
+    assert state.status == AgentStatus.COMPLETED
+    assert not any("Budget warning" in (m.get("content") or "") for m in state.messages)
+
+
+def test_worker_emits_usage_per_turn(tmp_path):
+    from pipeline.events import EventLog
+
+    plan = Plan(chunks=[_chunk()])
+    chunk = plan.chunks[0]
+    state = _make_state(chunk)
+    state.messages = _make_initial_messages(chunk, plan)
+    state.workspace = tmp_path
+    config = _make_config(tmp_path)
+    events = EventLog(tmp_path / "events.jsonl", run_id="r")
+
+    submit_args = {"summary": "done", "files_changed": [], "verified": "", "blocked": ""}
+    client = FakeClient([
+        ("", [{"id": "c1", "name": "list_dir", "arguments": {"path": "."}}]),
+        ("", [{"id": "s1", "name": "submit_work", "arguments": submit_args}]),
+    ])
+    _run(run_agent(client, config, plan, state, events))
+
+    usage = [e for e in EventLog.read(events.path) if e["kind"] == "usage"]
+    assert len(usage) == 2
+    assert all(e["role"] == "worker" and e["chunk"] == "agent-1" for e in usage)
+    assert [e["turn"] for e in usage] == [1, 2]

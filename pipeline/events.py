@@ -56,18 +56,26 @@ class EventLog:
         except OSError:
             log.exception("could not append to %s", self.path)
 
-    def emit_usage(self, role: str, model: str, usage: dict | None, **fields: Any) -> None:
-        """Token accounting. `usage` is the raw OpenAI usage object, which some
-        backends omit entirely — recorded as zeros with `reported: false` so a
-        missing number is never mistaken for a cheap call."""
+    def emit_usage(self, role: str, model: str, usage: dict | None,
+                   estimate: dict | None = None, **fields: Any) -> None:
+        """Token accounting. `usage` is the raw OpenAI usage object.
+
+        A backend that reports nothing falls back to `estimate` (see
+        pipeline.tokens) rather than to zeros, because a zero is indistinguishable
+        from a genuinely cheap call when totalling a run. Three states are kept
+        distinguishable: `reported` (the backend counted), `estimated` (we did),
+        and neither (nothing is known and the figures really are zero)."""
         usage = usage or {}
+        reported = bool(usage)
+        source = usage if reported else (estimate or {})
         self.emit(
             "usage",
             role=role,
             model=model,
-            reported=bool(usage),
-            prompt_tokens=int(usage.get("prompt_tokens") or 0),
-            completion_tokens=int(usage.get("completion_tokens") or 0),
+            reported=reported,
+            estimated=not reported and bool(estimate),
+            prompt_tokens=int(source.get("prompt_tokens") or 0),
+            completion_tokens=int(source.get("completion_tokens") or 0),
             **fields,
         )
 
@@ -96,22 +104,28 @@ class EventLog:
 
     @staticmethod
     def token_totals(path: str | Path) -> dict[str, dict[str, int]]:
-        """Per-model prompt/completion totals over a run's log, plus how many
-        calls reported no usage at all (so a total can be read honestly as a
-        floor rather than an exact figure)."""
+        """Per-model prompt/completion totals over a run's log.
+
+        `unreported_calls` counts calls the backend gave no usage for, and
+        `estimated_calls` how many of those contributed an estimate instead of a
+        zero — so a total can be read as exact, approximate, or a floor rather
+        than being silently all three at once."""
         totals: dict[str, dict[str, int]] = {}
         for event in EventLog.iter_events(path):
             if event.get("kind") != "usage":
                 continue
             bucket = totals.setdefault(
                 str(event.get("model", "unknown")),
-                {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0, "unreported_calls": 0},
+                {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0,
+                 "unreported_calls": 0, "estimated_calls": 0},
             )
             bucket["prompt_tokens"] += int(event.get("prompt_tokens") or 0)
             bucket["completion_tokens"] += int(event.get("completion_tokens") or 0)
             bucket["calls"] += 1
             if not event.get("reported", True):
                 bucket["unreported_calls"] += 1
+            if event.get("estimated"):
+                bucket["estimated_calls"] += 1
         return totals
 
 

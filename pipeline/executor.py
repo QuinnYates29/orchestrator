@@ -265,7 +265,7 @@ async def _run_one_chunk(
 
     if semaphore is not None:
         async with semaphore:
-            task = asyncio.create_task(run_agent(client, config, plan, state),
+            task = asyncio.create_task(run_agent(client, config, plan, state, events),
                                        name=state.label)
             try:
                 await task
@@ -277,7 +277,7 @@ async def _run_one_chunk(
                     state.status = AgentStatus.FAILED
                     state.kill_reason = state.kill_reason or "unexpected crash - see logs"
     else:
-        task = asyncio.create_task(run_agent(client, config, plan, state),
+        task = asyncio.create_task(run_agent(client, config, plan, state, events),
                                    name=state.label)
         try:
             await task

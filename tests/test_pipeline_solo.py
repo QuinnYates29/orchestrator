@@ -251,3 +251,38 @@ def test_http_status_error_is_not_retried(tmp_path):
     assert not result.ok
     assert result.stop_reason == "error"
     assert len(client.calls) == 1
+
+
+# --- Turn-budget warning ---
+
+def test_solo_agent_is_warned_before_the_ceiling(tmp_path):
+    (tmp_path / "a.txt").write_text("hello")
+    read = ("", [{"id": "c1", "name": "read_file", "arguments": {"path": "a.txt"}}], None)
+    client = FakeClient([read] * 12)
+    result = _run(run_solo(client, model="ornith", repo=tmp_path, task="t", max_turns=12))
+
+    assert result.stop_reason == "max_turns"
+    warnings = [m for m in result.messages
+                if m.get("role") == "user" and "Budget warning" in (m.get("content") or "")]
+    assert len(warnings) == 1
+    assert "2 turns left" in warnings[0]["content"] or "turns left" in warnings[0]["content"]
+
+
+def test_solo_agent_finishing_early_is_never_warned(tmp_path):
+    client = FakeClient([("done", None, None)])
+    result = _run(run_solo(client, model="ornith", repo=tmp_path, task="t", max_turns=60))
+    assert result.ok
+    assert not any("Budget warning" in (m.get("content") or "") for m in result.messages)
+
+
+def test_solo_estimates_tokens_when_the_backend_reports_none(tmp_path):
+    """A backend that reports nothing must not read as a free call."""
+    client = FakeClient([("a fairly long final answer about what changed", None, None)])
+    events = EventLog(tmp_path / "events.jsonl", run_id="r")
+    _run(run_solo(client, model="ornith", repo=tmp_path, task="t", events=events))
+
+    (usage,) = [e for e in EventLog.read(events.path) if e["kind"] == "usage"]
+    assert usage["reported"] is False
+    assert usage["estimated"] is True
+    assert usage["prompt_tokens"] > 0
+    assert usage["completion_tokens"] > 0
