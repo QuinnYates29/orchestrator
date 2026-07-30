@@ -315,3 +315,106 @@ def test_parse_json_bytes_malformed_is_not_ok():
     data, ok = _parse_json_bytes(b"<html>not json</html>")
     assert ok is False
     assert data is None
+
+
+# --- An agent shell must never be able to block on a prompt ---
+
+import time as _time
+
+from pipeline._procutil import ProcessTimeout as _ProcessTimeout, run_argv as _run_argv, run_shell as _run_shell
+
+
+def _go(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def test_git_editor_does_not_open_an_interactive_editor(tmp_path):
+    """A merge run spent its entire 15-minute dead-man's-switch with
+    /usr/bin/editor parked on .git/COMMIT_EDITMSG, because `git commit` with no
+    -m opens $EDITOR and waits for a human who is never coming."""
+    import subprocess
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for cmd in (["git", "config", "user.email", "t@t"], ["git", "config", "user.name", "t"]):
+        subprocess.run(cmd, cwd=tmp_path, check=True)
+    (tmp_path / "a.txt").write_text("hello")
+    _go(_run_argv(["git", "add", "-A"], cwd=tmp_path))
+
+    started = _time.monotonic()
+    code, _, err = _go(_run_argv(["git", "commit"], cwd=tmp_path, timeout_s=20))
+    elapsed = _time.monotonic() - started
+    assert elapsed < 15, f"the editor blocked ({elapsed:.0f}s) instead of being bypassed"
+    # Returning non-zero here is the right answer, not a regression: the editor
+    # exits without writing, so the message is empty and git declines. The agent
+    # gets a legible error in one second instead of a fifteen-minute stall.
+    assert code != 0
+    assert "empty commit message" in err.lower()
+
+
+def test_cherry_pick_continue_completes_without_a_human(tmp_path):
+    """The exact command that stalled a live merge run. Unlike a bare `git
+    commit`, its message is pre-filled from the picked commit, so bypassing the
+    editor lets it actually succeed."""
+    import subprocess
+
+    def git(*args, **kw):
+        return subprocess.run(["git", *args], cwd=kw.get("cwd", tmp_path),
+                              check=True, capture_output=True)
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (tmp_path / "f.txt").write_text("base\n")
+    git("add", "-A"); git("commit", "-qm", "base")
+    git("checkout", "-q", "-b", "side")
+    (tmp_path / "f.txt").write_text("side\n")
+    git("add", "-A"); git("commit", "-qm", "side change")
+    git("checkout", "-q", "master") if _has_branch(tmp_path, "master") else git("checkout", "-q", "main")
+    (tmp_path / "f.txt").write_text("main\n")
+    git("add", "-A"); git("commit", "-qm", "main change")
+
+    # Conflicting cherry-pick, resolved the way an agent would resolve it.
+    _go(_run_argv(["git", "cherry-pick", "side"], cwd=tmp_path))
+    (tmp_path / "f.txt").write_text("resolved\n")
+    _go(_run_argv(["git", "add", "-A"], cwd=tmp_path))
+
+    started = _time.monotonic()
+    code, _, err = _go(_run_argv(["git", "cherry-pick", "--continue"], cwd=tmp_path, timeout_s=25))
+    elapsed = _time.monotonic() - started
+    assert elapsed < 20, f"cherry-pick --continue blocked on an editor ({elapsed:.0f}s)"
+    assert code == 0, err
+    _, out, _ = _go(_run_argv(["git", "log", "--oneline", "-1"], cwd=tmp_path))
+    assert "side change" in out
+
+
+def _has_branch(repo, name):
+    import subprocess
+    r = subprocess.run(["git", "rev-parse", "--verify", name], cwd=repo, capture_output=True)
+    return r.returncode == 0
+
+
+def test_a_command_reading_stdin_gets_eof_not_a_hang(tmp_path):
+    """stdin is /dev/null, so anything that still prompts reads EOF at once."""
+    started = _time.monotonic()
+    code, out, _ = _go(_run_shell("read -r line; echo \"got:[$line]\"", cwd=tmp_path, timeout_s=20))
+    assert _time.monotonic() - started < 15
+    assert "got:[]" in out
+
+
+def test_a_pager_does_not_stall_output(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for cmd in (["git", "config", "user.email", "t@t"], ["git", "config", "user.name", "t"]):
+        subprocess.run(cmd, cwd=tmp_path, check=True)
+    (tmp_path / "a.txt").write_text("hello\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "x"], cwd=tmp_path, check=True)
+    started = _time.monotonic()
+    code, out, _ = _go(_run_shell("git log", cwd=tmp_path, timeout_s=20))
+    assert _time.monotonic() - started < 15
+    assert code == 0 and "x" in out
+
+
+def test_the_real_environment_still_reaches_the_command(tmp_path):
+    """Overriding a handful of interaction variables must not wipe PATH."""
+    code, out, _ = _go(_run_shell("echo $PATH", cwd=tmp_path, timeout_s=20))
+    assert code == 0 and out.strip()
