@@ -65,9 +65,15 @@ def _render(e: dict, totals: dict) -> str | None:
 
     if kind == "run_start":
         roles = e.get("roles") or {}
+        verify = e.get("verify_command")
+        vtext = (f"{C['green']}{verify}{C['off']}" if verify
+                 else f"{C['yellow']}SKIPPED (none configured){C['off']}")
         return (f"{stamp} {C['bold']}RUN{C['off']} {_clip(e.get('task', ''), 70)}\n"
                 f"{stamp} {C['dim']}roles: "
-                f"{', '.join(f'{k}={v}' for k, v in roles.items())}{C['off']}")
+                f"{', '.join(f'{k}={v}' for k, v in roles.items())}{C['off']}\n"
+                f"{stamp} {C['dim']}verify:{C['off']} {vtext}"
+                f"{C['dim']}  |  {e.get('max_concurrent_workers', '?')} concurrent, "
+                f"{e.get('max_agent_turns', '?')} turn ceiling{C['off']}")
     if kind == "plan":
         chunks = e.get("chunks") or []
         head = f"{stamp} {C['bold']}PLAN{C['off']} {len(chunks)} chunk(s){cost()}"

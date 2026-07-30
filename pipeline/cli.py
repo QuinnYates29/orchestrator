@@ -225,6 +225,13 @@ def _build_run_config(args, pcfg) -> RunConfig:
         max_tokens=getattr(args, "max_tokens", None) or RunConfig.max_tokens,
         keep_scratch=not getattr(args, "no_keep_scratch", False),
         roles=pcfg.roles.as_dict(),
+        # `roles` was plumbed through and these two were not, so every run
+        # silently used the dataclass defaults: max_concurrent_workers=4
+        # regardless of config, and - much worse - verify.command=None, which
+        # reports as *skipped*. A configured verify command was never run, so
+        # the verify/repair loop was dead for every `pipeline run` ever issued.
+        verify=pcfg.verify,
+        limits=pcfg.limits,
     )
 
 
@@ -244,15 +251,28 @@ async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog,
     """
     roles = config.roles
     resuming = plan is not None
+    # Recorded and logged because a config block that is silently ignored looks
+    # exactly like one that is honoured: verify.command going missing reports as
+    # "skipped", which reads as a deliberate choice rather than a dropped setting.
+    effective = {
+        "verify_command": config.verify.command,
+        "max_concurrent_workers": config.limits.max_concurrent_workers,
+        "max_agent_turns": config.max_agent_turns,
+        "max_tokens": config.max_tokens,
+    }
+    log.info("run %s: verify=%s, %d concurrent worker(s), %d turn ceiling",
+             config.run_id, config.verify.command or "SKIPPED (none configured)",
+             config.limits.max_concurrent_workers, config.max_agent_turns)
     async with OrchestratorClient(config.orchestrator_url, config.admin_url, config.api_key) as client:
         if resuming:
             log.info("run %s: resuming with the stored plan (%d chunks)",
                      config.run_id, len(plan.chunks))
             events.emit("run_start", repo=str(config.repo), roles=roles,
-                        task=config.task[:500], resumed=True)
+                        task=config.task[:500], resumed=True, **effective)
         else:
             log.info("run %s: loading %s to plan", config.run_id, roles["planner"])
-            events.emit("run_start", repo=str(config.repo), roles=roles, task=config.task[:500])
+            events.emit("run_start", repo=str(config.repo), roles=roles,
+                        task=config.task[:500], **effective)
             # Roles became configurable in phase 0, but this call still hardcoded
             # "ds4" and passed the role's *model* as a profile - so `planner:
             # ornith` asked to load ds4 with a profile named "ornith".

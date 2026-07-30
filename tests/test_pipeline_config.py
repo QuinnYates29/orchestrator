@@ -76,3 +76,66 @@ def test_repo_config_yaml_parses():
     cfg = pipeline_config.load()
     assert cfg.roles.planner
     assert cfg.limits.max_concurrent_workers >= 1
+
+
+# --- The whole `pipeline:` block must reach RunConfig, not just roles ---
+
+from pathlib import Path as _Path
+
+from pipeline.cli import build_parser, _build_run_config
+from pipeline import config as _pc
+
+
+def _run_config_from(config_text: str, tmp_path, extra_argv=()):
+    cfg_file = tmp_path / "pipeline.yaml"
+    cfg_file.write_text(config_text)
+    task = tmp_path / "task.md"
+    task.write_text("do the thing")
+    argv = ["run", "--repo", str(tmp_path), "--task-file", str(task),
+            "--config", str(cfg_file), *extra_argv]
+    args = build_parser().parse_args(argv)
+    return _build_run_config(args, _pc.load(cfg_file))
+
+
+def test_verify_command_reaches_the_run(tmp_path):
+    """`roles` was plumbed through and `verify` was not, so a configured verify
+    command silently became None - which reports as *skipped*, i.e. as a
+    deliberate choice rather than a dropped setting. The verify/repair loop was
+    dead for every run."""
+    rc = _run_config_from(
+        "pipeline:\n  verify:\n    command: python3 -m pytest tests/ -q\n", tmp_path)
+    assert rc.verify.command == "python3 -m pytest tests/ -q"
+    assert rc.verify.configured is True
+
+
+def test_verify_repair_attempts_reach_the_run(tmp_path):
+    rc = _run_config_from(
+        "pipeline:\n  verify:\n    command: make check\n    max_repair_attempts: 5\n", tmp_path)
+    assert rc.verify.max_repair_attempts == 5
+
+
+def test_limits_reach_the_run(tmp_path):
+    rc = _run_config_from(
+        "pipeline:\n  limits:\n    max_concurrent_workers: 2\n    tool_output_chars: 1234\n",
+        tmp_path)
+    assert rc.limits.max_concurrent_workers == 2
+    assert rc.limits.tool_output_chars == 1234
+
+
+def test_cli_flag_still_beats_the_configured_turn_ceiling(tmp_path):
+    rc = _run_config_from(
+        "pipeline:\n  limits:\n    max_agent_turns: 60\n", tmp_path,
+        extra_argv=["--max-agent-turns", "40"])
+    assert rc.max_agent_turns == 40
+
+
+def test_configured_turn_ceiling_applies_without_the_flag(tmp_path):
+    rc = _run_config_from("pipeline:\n  limits:\n    max_agent_turns: 25\n", tmp_path)
+    assert rc.max_agent_turns == 25
+
+
+def test_no_verify_configured_is_still_none(tmp_path):
+    """Absence must stay absent - this fix must not invent a default command."""
+    rc = _run_config_from("pipeline:\n  roles:\n    planner: ds4\n", tmp_path)
+    assert rc.verify.command is None
+    assert rc.verify.configured is False
