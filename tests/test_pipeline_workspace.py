@@ -139,3 +139,86 @@ def test_cleanup_workspace_removes_directory(tmp_path):
     assert ws.exists()
     cleanup_workspace(ws)
     assert not ws.exists()
+
+
+# --- Fetching must not leave litter in the user's repository ---
+
+from pipeline._procutil import run_argv
+from pipeline.workspace import fetch_from_workspace, prune_workspace_remotes
+
+
+def _plain_repo(path: Path) -> Path:
+    """A minimal committed repo. Distinct from _init_repo above, which returns
+    a commit sha; redefining that name here would silently rebind it for every
+    test in the file."""
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "--quiet"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
+    (path / "f.txt").write_text("base\n")
+    subprocess.run(["git", "add", "-A"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "--quiet", "-m", "base"], cwd=path, check=True)
+    return path
+
+
+def _branch_with_work(real: Path, ws: Path, branch: str, filename: str = "new.txt") -> str:
+    subprocess.run(["git", "clone", "--local", "--quiet", str(real), str(ws)], check=True)
+    subprocess.run(["git", "checkout", "--quiet", "-b", branch], cwd=ws, check=True)
+    (ws / filename).write_text("hello\n")
+    subprocess.run(["git", "add", "-A"], cwd=ws, check=True)
+    subprocess.run(["git", "commit", "--quiet", "-m", "work"], cwd=ws, check=True)
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=ws,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _remotes(repo: Path) -> list[str]:
+    out = subprocess.run(["git", "remote"], cwd=repo, capture_output=True, text=True).stdout
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def test_fetch_from_workspace_registers_no_remote(tmp_path):
+    """It used to add a `ws-<chunk>` remote per chunk and never remove it, so
+    every run left dangling remotes in the user's repo, each pointing at a
+    scratch clone that keep_scratch=False would then delete."""
+    real = _plain_repo(tmp_path / "real")
+    _branch_with_work(real, tmp_path / "ws", "agent/x")
+
+    before = _remotes(real)
+    asyncio.run(fetch_from_workspace(real, tmp_path / "ws", "agent/x"))
+    assert _remotes(real) == before, "fetching must not add a remote"
+
+
+def test_fetched_commit_is_still_usable_without_a_remote(tmp_path):
+    """Dropping the remote must not break the thing the remote was there for."""
+    real = _plain_repo(tmp_path / "real")
+    sha = _branch_with_work(real, tmp_path / "ws", "agent/x")
+
+    asyncio.run(fetch_from_workspace(real, tmp_path / "ws", "agent/x"))
+    code, _, _ = asyncio.run(run_argv(["git", "cat-file", "-e", sha], cwd=real))
+    assert code == 0, "the commit was not fetched into the real repo"
+    code, _, err = asyncio.run(run_argv(["git", "cherry-pick", sha], cwd=real))
+    assert code == 0, err
+    assert (real / "new.txt").exists()
+
+
+def test_fetch_failure_still_raises(tmp_path):
+    real = _plain_repo(tmp_path / "real")
+    with pytest.raises(RuntimeError, match="git fetch"):
+        asyncio.run(fetch_from_workspace(real, tmp_path / "nonexistent", "agent/x"))
+
+
+def test_prune_removes_only_ws_remotes(tmp_path):
+    """Repos that already went through earlier runs carry the litter."""
+    real = _plain_repo(tmp_path / "real")
+    subprocess.run(["git", "remote", "add", "origin", "/somewhere"], cwd=real, check=True)
+    subprocess.run(["git", "remote", "add", "ws-chunk-1", "/gone/a"], cwd=real, check=True)
+    subprocess.run(["git", "remote", "add", "ws-chunk-2", "/gone/b"], cwd=real, check=True)
+
+    assert asyncio.run(prune_workspace_remotes(real)) == 2
+    assert _remotes(real) == ["origin"], "a real remote must survive pruning"
+
+
+def test_prune_on_a_clean_repo_is_a_no_op(tmp_path):
+    real = _plain_repo(tmp_path / "real")
+    assert asyncio.run(prune_workspace_remotes(real)) == 0
+    assert _remotes(real) == []

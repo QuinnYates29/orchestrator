@@ -33,6 +33,7 @@ from .workspace import (
     conflicted_files,
     diff_against_base,
     fetch_from_workspace,
+    prune_workspace_remotes,
     reset_to_commit,
 )
 
@@ -119,6 +120,10 @@ async def merge(
     Returns (new_commit_or_None, summary).
     """
     events = events or NullEventLog()
+    # Earlier versions registered a `ws-<chunk>` remote per chunk and never
+    # removed it, so repos that have been through a few runs already carry the
+    # litter. Clear it before adding anything of our own.
+    await prune_workspace_remotes(config.repo)
     # --- topological order of chunk ids ---
     waves = topological_waves(plan.chunks)
     topo_ids: list[str] = []

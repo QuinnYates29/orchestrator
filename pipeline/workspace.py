@@ -103,21 +103,44 @@ async def changed_files(workspace: Path, base_commit: str) -> list[str]:
 # -- Merge-phase helpers (operate on the real repo, not a workspace) --------
 
 async def fetch_from_workspace(real_repo: Path, workspace: Path, branch: str) -> None:
-    """Add the workspace clone as a remote in the real repo and fetch its
-    branch. The remote is named after the workspace path to avoid collisions."""
-    remote_name = f"ws-{workspace.name}"
-    # Ensure the remote is not already present (from a prior fetch).
+    """Fetch a workspace's branch into the real repo so its commits can be
+    cherry-picked.
+
+    Fetches by path rather than registering a remote. The old version added a
+    `ws-<workspace>` remote per chunk and never removed it, so every run left
+    one dangling remote per chunk in the *user's* repository, each pointing at a
+    scratch clone that keep_scratch=False would then delete. `git fetch <path>
+    <branch>` needs no remote at all: the objects land in the object store and
+    FETCH_HEAD, which is all cherry-pick requires.
+    """
     code, _, err = await run_argv(
-        ["git", "remote", "add", remote_name, str(workspace)], cwd=real_repo,
-    )
-    if code != 0:
-        # Remote may already exist; that's fine.
-        pass
-    code, _, err = await run_argv(
-        ["git", "fetch", "--quiet", remote_name, branch], cwd=real_repo,
+        ["git", "fetch", "--quiet", str(workspace), branch], cwd=real_repo,
     )
     if code != 0:
         raise RuntimeError(f"git fetch from workspace {workspace} failed: {err.strip()}")
+
+
+async def prune_workspace_remotes(real_repo: Path) -> int:
+    """Remove `ws-*` remotes left behind by earlier runs. Returns how many.
+
+    Existing repositories already carry this litter, and a repo that has been
+    through several runs accumulates one dead remote per chunk per run.
+    """
+    code, out, _ = await run_argv(["git", "remote"], cwd=real_repo)
+    if code != 0:
+        return 0
+    stale = [name for name in (line.strip() for line in out.splitlines())
+             if name.startswith("ws-")]
+    removed = 0
+    for name in stale:
+        code, _, err = await run_argv(["git", "remote", "remove", name], cwd=real_repo)
+        if code == 0:
+            removed += 1
+        else:
+            log.warning("could not remove stale remote %s: %s", name, err.strip())
+    if removed:
+        log.info("pruned %d stale workspace remote(s) from %s", removed, real_repo)
+    return removed
 
 
 async def cherry_pick_commit(real_repo: Path, commit: str) -> tuple[int, str, str]:
