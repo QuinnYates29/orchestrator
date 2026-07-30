@@ -135,6 +135,11 @@ def build_parser() -> argparse.ArgumentParser:
     explore_p.add_argument("--max-questions", type=int, default=6,
                            help="Maximum number of sub-questions the explorer may produce "
                                 "(default 6).")
+    explore_p.add_argument("--max-tokens", type=int, default=8192,
+                           help="Per-turn generation cap for every explore stage. The split "
+                                "stage's submit_questions call truncates into invalid JSON if "
+                                "this is too low for a verbose reasoner; more headroom also "
+                                "means a runaway turn takes longer to end.")
     explore_p.add_argument("--no-load", action="store_true",
                            help="Skip the /admin/load residency check (the backend is already up).")
 
@@ -186,11 +191,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _read_task(args) -> str:
-    if args.task is not None:
-        return args.task
-    if not args.task_file.exists():
-        raise SystemExit(f"task file not found: {args.task_file}")
-    return args.task_file.read_text()
+    # `explore` deliberately takes --question rather than --task, so it never
+    # gets _add_common_args and has neither attribute. Reaching for args.task
+    # unconditionally made `pipeline explore` an AttributeError before it sent a
+    # single request - it had never once run from the CLI.
+    task = getattr(args, "task", None)
+    if task is not None:
+        return task
+    task_file = getattr(args, "task_file", None)
+    if task_file is None:
+        return getattr(args, "question", "")
+    if not task_file.exists():
+        raise SystemExit(f"task file not found: {task_file}")
+    return task_file.read_text()
 
 
 def _require_git_repo(repo: Path) -> None:
@@ -209,7 +222,7 @@ def _build_run_config(args, pcfg) -> RunConfig:
         fast_repetition_tick_s=getattr(args, "fast_tick_s", 3.0),
         review_tick_s=getattr(args, "review_tick_s", 30.0),
         max_agent_turns=args.max_agent_turns or pcfg.limits.max_agent_turns,
-        max_tokens=args.max_tokens,
+        max_tokens=getattr(args, "max_tokens", None) or RunConfig.max_tokens,
         keep_scratch=not getattr(args, "no_keep_scratch", False),
         roles=pcfg.roles.as_dict(),
     )
@@ -357,6 +370,7 @@ def _cmd_explore(args, pcfg) -> int:
         api_key=args.api_key, pipeline_cfg=pcfg,
         max_questions=args.max_questions,
         agent_max_turns=args.max_agent_turns or pcfg.limits.max_agent_turns,
+        max_tokens=args.max_tokens,
         events=events,
         load_wait_s=args.load_wait_s,
         ensure_resident=not args.no_load,

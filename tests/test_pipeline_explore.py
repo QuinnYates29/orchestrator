@@ -553,3 +553,109 @@ def test_cli_explore_question_is_required():
 # Path import
 # ----------------------------------------------------------------------
 from pathlib import Path
+
+
+# --- Split stage: the forced final turn, and what happens if it still fails ---
+
+import json
+
+from pipeline.explore import SYSTEM_PROMPT_SPLIT_FINAL, _stage_split
+from pipeline.events import EventLog as _EventLog
+
+
+class _RecordingSplitClient:
+    """Always explores, never submits - the behaviour that killed the live run."""
+
+    def __init__(self, submit_on_turn=None, questions=("Q1?",)):
+        self.submit_on_turn = submit_on_turn
+        self.questions = list(questions)
+        self.seen = []
+
+    async def chat_once(self, model, messages, **kwargs):
+        turn = len(self.seen)
+        self.seen.append({"messages": [dict(m) for m in messages],
+                          "tools": kwargs.get("tools"),
+                          "tool_choice": kwargs.get("tool_choice")})
+        if turn == self.submit_on_turn:
+            fn = {"name": "submit_questions",
+                  "arguments": json.dumps({"questions": self.questions})}
+        else:
+            fn = {"name": "list_dir", "arguments": json.dumps({"path": "."})}
+        return {"choices": [{"message": {"role": "assistant", "content": None,
+                                         "tool_calls": [{"id": f"c{turn}", "type": "function",
+                                                         "function": fn}]}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+
+
+def test_split_final_turn_drops_the_explore_first_instruction(tmp_path):
+    client = _RecordingSplitClient(submit_on_turn=9)
+    questions, _, _ = _run(_stage_split(client, "ds4", tmp_path, "the question",
+                                        max_turns=10))
+    assert questions == ["Q1?"]
+    final = client.seen[-1]
+    assert final["messages"][0]["content"] == SYSTEM_PROMPT_SPLIT_FINAL
+    assert [t["function"]["name"] for t in final["tools"]] == ["submit_questions"]
+
+
+def test_split_falls_back_to_the_question_itself(tmp_path):
+    """Ten turns of paid exploration used to end in a RuntimeError that returned
+    nothing. A fan-out of one still answers the user."""
+    client = _RecordingSplitClient(submit_on_turn=None)
+    events = _EventLog(tmp_path / "events.jsonl", run_id="r")
+    questions, _, _ = _run(_stage_split(client, "ds4", tmp_path, "the question",
+                                        events, max_turns=4))
+    assert questions == ["the question"]
+    kinds = [e["kind"] for e in _EventLog.read(events.path)]
+    assert "explore_split_fallback" in kinds, "a silent degrade is worse than a loud one"
+
+
+def test_split_returns_early_without_touching_the_final_turn(tmp_path):
+    client = _RecordingSplitClient(submit_on_turn=0, questions=("A?", "B?"))
+    questions, _, _ = _run(_stage_split(client, "ds4", tmp_path, "q", max_turns=10))
+    assert questions == ["A?", "B?"]
+    assert len(client.seen) == 1
+    assert client.seen[0]["tool_choice"] == "auto"
+
+
+# --- Tool arguments arrive as a JSON string, not a dict ---
+
+from pipeline.explore import _tool_arguments
+
+
+def test_tool_arguments_decodes_the_wire_format():
+    """Every read-only tool call in the fan-out failed with
+    "'str' object has no attribute 'get'" because the JSON string the
+    orchestrator returns was passed to execute_tool unparsed."""
+    assert _tool_arguments({"name": "read_file",
+                            "arguments": '{"path": "a.py"}'}) == {"path": "a.py"}
+
+
+def test_tool_arguments_passes_through_a_dict():
+    assert _tool_arguments({"name": "x", "arguments": {"path": "a.py"}}) == {"path": "a.py"}
+
+
+def test_tool_arguments_survives_malformed_json():
+    """A truncated tool call must cost one turn, not the whole agent."""
+    assert _tool_arguments({"name": "x", "arguments": '{"path": "a.p'}) == {}
+    assert _tool_arguments({"name": "x", "arguments": ""}) == {}
+    assert _tool_arguments({"name": "x"}) == {}
+    assert _tool_arguments({"name": "x", "arguments": "[1,2]"}) == {}
+
+
+def test_single_agent_actually_reads_the_file(tmp_path):
+    """End-to-end through the real tool dispatcher: the agent must get file
+    content back, not an error string."""
+    (tmp_path / "target.py").write_text("MAGIC_VALUE = 4242\n")
+    client = FakeExploreClient([
+        ("", [{"id": "c1", "name": "read_file",
+               "arguments": json.dumps({"path": "target.py"})}],
+         {"prompt_tokens": 10, "completion_tokens": 2}),
+        ("it is 4242", None, {"prompt_tokens": 10, "completion_tokens": 5}),
+    ])
+    result = _run(_run_single_agent(client, model="m", repo=tmp_path,
+                                    sub_question="what is MAGIC_VALUE?", events=None))
+    assert result.ok
+    tool_messages = [m for m in client.chat_once_calls[-1]["messages"] if m.get("role") == "tool"]
+    assert tool_messages, "the tool result never made it back into the conversation"
+    assert "MAGIC_VALUE = 4242" in tool_messages[0]["content"]
+    assert "has no attribute" not in tool_messages[0]["content"]

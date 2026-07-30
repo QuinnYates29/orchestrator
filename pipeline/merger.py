@@ -72,6 +72,14 @@ def _escalation_system_prompt() -> str:
     )
 
 
+def _final_turn_system_prompt() -> str:
+    return (
+        "You are reporting on a merge conflict or verify failure you have been working on. "
+        "Call finish_merge now with a summary of what you did, including anything you were "
+        "unable to resolve. You have no other tools and no further turns."
+    )
+
+
 def _build_escalation_user_prompt(
     outcome: ChunkOutcome,
     conflict_info: str | None,
@@ -308,8 +316,16 @@ async def _resolve_escalation(
         tool_choice = (
             {"type": "function", "function": {"name": "finish_merge"}} if forced_final else "auto"
         )
+        # See planner.FINAL_TURN_SYSTEM_PROMPT: a system prompt that says "you
+        # have full tool access" overrides tool_choice, so the last turn spends
+        # itself on another read_file instead of reporting.
+        turn_messages = messages
+        turn_tools = tools
+        if forced_final:
+            turn_messages = [{"role": "system", "content": _final_turn_system_prompt()}] + messages[1:]
+            turn_tools = [FINISH_MERGE_TOOL]
         completion = await client.chat_once(
-            model, messages, tools=tools,
+            model, turn_messages, tools=turn_tools,
             tool_choice=tool_choice, max_tokens=config.max_tokens,
         )
         message = completion["choices"][0]["message"]

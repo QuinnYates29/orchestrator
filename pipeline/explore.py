@@ -97,6 +97,30 @@ SUBMIT_QUESTIONS_TOOL = {
 }
 
 
+def _tool_arguments(fn: dict) -> dict:
+    """Decode a tool call's arguments.
+
+    On the wire these are a JSON *string*, not an object. Both explore stages
+    handed that string straight to execute_tool, which immediately did
+    `.get(...)` on it - so every read_file, list_dir, grep and glob in the
+    read-only fan-out returned `error: 'str' object has no attribute 'get'`.
+    The agents never saw a single byte of the repository they were sent to
+    read, and answered from priors instead, fluently enough that the failure
+    only showed up in the event log.
+    """
+    raw = fn.get("arguments")
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        log.warning("could not decode tool arguments for %s: %r", fn.get("name"), raw[:200])
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 # -- stage 1: split -----------------------------------------------------
 
 SYSTEM_PROMPT_SPLIT = (
@@ -112,6 +136,19 @@ SYSTEM_PROMPT_SPLIT = (
     "to another. Group related concerns together rather than splitting hairs."
 )
 
+# The prompt above opens with "First, use list_dir..." - which on the final turn
+# is the exact opposite of what is wanted, and beats tool_choice. ds4 offered
+# ONLY submit_questions, with tool_choice forcing it, still answered with a
+# fabricated list_dir call (inventing a `dir_path` argument the schema does not
+# have) because the system prompt told it to explore first. Swapping the system
+# message on the last turn is what actually makes forcing work.
+SYSTEM_PROMPT_SPLIT_FINAL = (
+    "You are decomposing a question about a repository into 1-6 independent sub-questions, "
+    "each of which can be answered by reading the repo. Call submit_questions now with the "
+    "best sub-questions you can form from what you already know. You have no other tools "
+    "and no further turns."
+)
+
 
 async def _stage_split(
     client: OrchestratorClient,
@@ -120,7 +157,7 @@ async def _stage_split(
     question: str,
     events: EventLog | None = None,
     max_turns: int = 10,
-    max_tokens: int = 4096,
+    max_tokens: int = 8192,
 ) -> tuple[list[str], int, int]:
     events = events or NullEventLog()
     """Run the explorer through the repo and collect sub-questions."""
@@ -139,9 +176,17 @@ async def _stage_split(
             {"type": "function", "function": {"name": "submit_questions"}}
             if forced_final else "auto"
         )
+        # On the last turn, withdraw the exploration tools and the instruction to
+        # use them; leaving either in place lets the model keep exploring right
+        # past the deadline.
+        turn_messages = messages
+        turn_tools = tools
+        if forced_final:
+            turn_messages = [{"role": "system", "content": SYSTEM_PROMPT_SPLIT_FINAL}] + messages[1:]
+            turn_tools = [SUBMIT_QUESTIONS_TOOL]
         try:
             completion = await client.chat_once(
-                model, messages, tools=tools,
+                model, turn_messages, tools=turn_tools,
                 tool_choice=tool_choice, max_tokens=max_tokens,
             )
         except OrchestratorError as e:
@@ -173,9 +218,7 @@ async def _stage_split(
             fn = call["function"]
             name = fn["name"]
             if name == "submit_questions":
-                import json as _json
-                args = _json.loads(fn["arguments"]) if isinstance(fn["arguments"], str) else fn["arguments"]
-                questions = args.get("questions", [])
+                questions = _tool_arguments(fn).get("questions", [])
                 if not questions:
                     messages.append({
                         "role": "user",
@@ -190,7 +233,7 @@ async def _stage_split(
 
             # Execute the read-only tool and feed the result back.
             try:
-                result = await execute_tool(name, fn.get("arguments", {}), repo,
+                result = await execute_tool(name, _tool_arguments(fn), repo,
                                             run_shell_timeout_s=0)
             except Exception as e:
                 result = f"error: {e}"
@@ -200,7 +243,14 @@ async def _stage_split(
                 "content": result,
             })
 
-    raise RuntimeError(f"explorer did not submit questions within {max_turns} turns")
+    # Ten turns of paid exploration have already happened; raising here throws
+    # all of it away and returns nothing to the caller. The question itself is
+    # always a valid sub-question, so degrade to a fan-out of one rather than
+    # failing the run.
+    log.warning("split: no submit_questions within %d turns; falling back to the question itself",
+                max_turns)
+    events.emit("explore_split_fallback", turns=max_turns, reason="no submit_questions call")
+    return [question], split_prompt_tokens, split_completion_tokens
 
 
 # -- stage 2: answer (per-sub-question agent loop) --------------------
@@ -221,7 +271,7 @@ async def _run_single_agent(
     repo: Path,
     sub_question: str,
     max_turns: int = 15,
-    max_tokens: int = 4096,
+    max_tokens: int = 8192,
     events: EventLog | None = None,
 ) -> SubQuestionResult:
     """Run one read-only agent on one sub-question. Never raises — errors are
@@ -288,7 +338,7 @@ async def _run_single_agent(
 
             for tc in tool_calls:
                 name = tc["function"]["name"]
-                args = tc["function"].get("arguments", {})
+                args = _tool_arguments(tc["function"])
                 try:
                     output = await execute_tool(name, args, repo, run_shell_timeout_s=0)
                 except Exception as e:
@@ -402,6 +452,7 @@ async def run_explore(
     question: str,
     max_questions: int = 6,
     agent_max_turns: int = 15,
+    max_tokens: int = 8192,
     pipeline_cfg: PipelineCfg | None = None,
     events: EventLog | None = None,
 ) -> ExploreResult:
@@ -422,7 +473,7 @@ async def run_explore(
     # Stage 1: Split
     try:
         sub_questions, split_pt, split_ct = await _stage_split(
-            client, model, repo, question, events,
+            client, model, repo, question, events, max_tokens=max_tokens,
         )
     except OrchestratorError:
         # Propagate orchestrator errors — they indicate a real problem,
@@ -446,6 +497,7 @@ async def run_explore(
                 client, model=model, repo=repo,
                 sub_question=sub_questions[i],
                 max_turns=agent_max_turns,
+                max_tokens=max_tokens,
                 events=events,
             ),
             name=f"explore-agent-{i}",
@@ -516,6 +568,7 @@ async def explore_session(
     pipeline_cfg: PipelineCfg,
     max_questions: int = 6,
     agent_max_turns: int = 15,
+    max_tokens: int = 8192,
     events: EventLog | None = None,
     load_wait_s: float = 180.0,
     ensure_resident: bool = True,
@@ -528,6 +581,7 @@ async def explore_session(
         return await run_explore(
             client, model=model, repo=repo, question=question,
             max_questions=max_questions, agent_max_turns=agent_max_turns,
+            max_tokens=max_tokens,
             pipeline_cfg=pipeline_cfg, events=events,
         )
 

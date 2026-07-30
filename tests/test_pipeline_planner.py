@@ -189,3 +189,71 @@ def test_create_plan_emits_usage_per_call(tmp_path):
     assert usage["role"] == "planner"
     assert usage["reported"] is True
     assert usage["prompt_tokens"] == 100
+
+
+# --- The forced final turn has to actually force ---
+
+from pipeline.planner import FINAL_TURN_SYSTEM_PROMPT, MAX_EXPLORATION_TURNS
+
+
+class _RecordingClient(_FakePlannerClient):
+    def __init__(self, completions):
+        super().__init__(completions)
+        self.seen = []
+
+    async def chat_once(self, model, messages, **kwargs):
+        self.seen.append({"messages": [dict(m) for m in messages],
+                          "tools": kwargs.get("tools"),
+                          "tool_choice": kwargs.get("tool_choice")})
+        return await super().chat_once(model, messages, **kwargs)
+
+
+def _explore_turn():
+    """A turn that calls a read-only tool instead of submitting."""
+    return {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+        {"id": "t1", "type": "function",
+         "function": {"name": "list_dir", "arguments": json.dumps({"path": "."})}}]}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+
+
+def test_final_turn_withdraws_the_exploration_tools_and_the_instruction(tmp_path):
+    """ds4 ignores tool_choice when the system prompt still says to explore
+    first - it answered a forced submit_plan with a fabricated list_dir call.
+    Forcing only works if both the other tools and that instruction are gone."""
+    good = [{"id": "a", "title": "A", "description": "d"}]
+    script = [_explore_turn()] * (MAX_EXPLORATION_TURNS - 1) + [_submit(good)]
+    client = _RecordingClient(script)
+
+    plan = _asyncio.run(_create_plan(client, _RunConfig(repo=tmp_path, task="t")))
+    assert len(plan.chunks) == 1
+
+    final = client.seen[-1]
+    assert [t["function"]["name"] for t in final["tools"]] == ["submit_plan"]
+    assert final["messages"][0]["content"] == FINAL_TURN_SYSTEM_PROMPT
+    assert "Explore the repository first" not in final["messages"][0]["content"]
+    assert final["tool_choice"]["function"]["name"] == "submit_plan"
+
+
+def test_ordinary_turns_keep_the_read_only_tools(tmp_path):
+    good = [{"id": "a", "title": "A", "description": "d"}]
+    client = _RecordingClient([_explore_turn(), _submit(good)])
+    _asyncio.run(_create_plan(client, _RunConfig(repo=tmp_path, task="t")))
+
+    first = client.seen[0]
+    assert len(first["tools"]) > 1
+    assert first["tool_choice"] == "auto"
+    assert "Explore the repository first" in first["messages"][0]["content"]
+
+
+def test_conversation_history_survives_the_final_turn_swap(tmp_path):
+    """Only the system message is replaced - everything the planner learned
+    while exploring has to still be there, or forcing it to submit produces a
+    plan built on nothing."""
+    good = [{"id": "a", "title": "A", "description": "d"}]
+    script = [_explore_turn()] * (MAX_EXPLORATION_TURNS - 1) + [_submit(good)]
+    client = _RecordingClient(script)
+    _asyncio.run(_create_plan(client, _RunConfig(repo=tmp_path, task="the original task")))
+
+    final = client.seen[-1]
+    assert final["messages"][1] == {"role": "user", "content": "the original task"}
+    assert any(m.get("role") == "tool" for m in final["messages"])

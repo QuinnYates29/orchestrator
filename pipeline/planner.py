@@ -105,6 +105,18 @@ def _system_prompt(config: RunConfig) -> str:
     )
 
 
+# The main prompt opens by telling the planner to explore the repo first, which
+# on the final turn beats tool_choice outright: with submit_plan forced and no
+# other tool even offered, ds4 still answered with a fabricated list_dir call.
+# Forcing only works if the instruction to keep exploring is withdrawn too.
+FINAL_TURN_SYSTEM_PROMPT = (
+    "You are splitting an implementation task into chunks for parallel agents. Call "
+    "submit_plan now with the best plan you can form from what you already know. Each chunk "
+    "is a vertical slice - implementation plus its own tests - and any chunk that needs "
+    "another's output must list it in depends_on. You have no other tools and no further turns."
+)
+
+
 async def create_plan(client: OrchestratorClient, config: RunConfig,
                       events: EventLog | None = None) -> Plan:
     events = events or NullEventLog()
@@ -121,8 +133,13 @@ async def create_plan(client: OrchestratorClient, config: RunConfig,
             {"type": "function", "function": {"name": "submit_plan"}}
             if forced_final else "auto"
         )
+        turn_messages = messages
+        turn_tools = tools
+        if forced_final:
+            turn_messages = [{"role": "system", "content": FINAL_TURN_SYSTEM_PROMPT}] + messages[1:]
+            turn_tools = [SUBMIT_PLAN_TOOL]
         completion = await client.chat_once(
-            model, messages, tools=tools,
+            model, turn_messages, tools=turn_tools,
             tool_choice=tool_choice, max_tokens=config.max_tokens,
         )
         message = completion["choices"][0]["message"]

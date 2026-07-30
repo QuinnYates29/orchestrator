@@ -221,11 +221,194 @@ Not harness bugs — quality limits of the models, worth recording:
   (`celsius`, `kelvin`) for temperature. Internally consistent, inconsistent
   with the request.
 
-## Known-unfixable during this run
+## ~~Known-unfixable during this run~~ — this was wrong
 
-Neither ds4-server nor ornith's llama-server reports `usage` in streaming
-responses, so **every token figure in the event log is `reported: false`**.
-`EventLog.emit_usage` records this honestly rather than as zero, but the
-original plan's before/after token comparison has no data behind it. Measuring
-the token-reduction goal needs a backend that reports usage, or client-side
-tokenization.
+I recorded here that "neither ds4-server nor ornith's llama-server reports
+`usage` in streaming responses", and concluded the token-reduction goal could
+not be measured without a different backend.
+
+That was a wrong diagnosis, corrected in the follow-up pass below. Both
+backends report usage perfectly well. The client never asked.
+
+---
+
+## Follow-up pass: three fixes from how the end-to-end run behaved
+
+### 7. Token accounting: the flag was never sent
+
+`pipeline/client.py`, `pipeline/events.py`, `pipeline/tokens.py` (new),
+`pipeline/worker.py`, `pipeline/planner.py`, `pipeline/merger.py`,
+`pipeline/explore.py`
+
+An OpenAI-compatible server sends no usage on a stream unless the request sets
+`stream_options: {"include_usage": true}`. `_build_body` never set it. Adding
+it turns every `reported: false` into a real number — confirmed against both
+backends directly and through the orchestrator proxy, on the streaming and
+non-streaming paths.
+
+I should have tested the backends before writing that section. The evidence I
+had — an event log full of `reported: false` — was equally consistent with "the
+backends can't" and "we didn't ask", and I picked the first without checking
+the second, which was one `curl` away.
+
+Two further gaps under the same heading:
+
+- **`emit_usage` was only ever called from `solo.py` and `explore.py`.** The
+  whole `run` path — planner, every worker turn, merger escalation — recorded
+  nothing at all. Even with usage reported, `pipeline runs` would have shown an
+  empty table for exactly the runs worth measuring.
+- **`explore.py` read `completion["choices"][0]["usage"]`.** `usage` is a
+  sibling of `choices`, not a member of one, so it was always `{}`. Its test
+  fixture nested usage in the same wrong place, so the test and the bug agreed
+  with each other — the same shape as fix 5, where a test's own scaffolding was
+  what hid the defect.
+
+`pipeline/tokens.py` is a fallback estimator for a backend that genuinely
+reports nothing. It is a bytes-per-token ratio, not a tokenizer, and events
+built from it carry `estimated: true` alongside `reported: false` so the three
+states — counted, approximated, unknown — stay distinguishable rather than
+collapsing into "zero".
+
+### 8. The planner split by activity instead of by feature
+
+`pipeline/planner.py`
+
+The end-to-end plan was:
+
+```
+chunk-1: Extend registry and add all converter modules
+chunk-2: Add pytest tests for all new modules      <- no depends_on
+chunk-3: Run tests to verify everything passes     <- produced no changes
+```
+
+Three separate failures in one plan. `chunk-2` declared no dependency on
+`chunk-1`, so it ran in the same wave and wrote tests against an API it could
+not see — which is the direct cause of the unit-name drift recorded above.
+`chunk-3` had no files to write and duplicated what the harness does after the
+merge; it burned an agent to produce an empty diff. And both `chunk-1` and
+`chunk-2` touched the registry, which is where the `.pyc` conflicts came from.
+
+The prompt now names all three anti-patterns and says why each one fails.
+Prompt-only, deliberately: structural validation that second-guesses a *split*
+would reject plans a human would accept.
+
+What is validated is only what cannot run — duplicate ids, dangling edges,
+cycles. That used to surface as a `ValueError` out of `topological_waves`
+*after* planning finished, taking the run down and discarding every exploration
+turn that produced the plan. It is now handed back to the planner, which is the
+only thing that can fix it and is still in the loop when it happens.
+
+### 9. Hitting the turn ceiling threw away finished work
+
+`pipeline/worker.py`, `pipeline/solo.py`
+
+Phase 1 hit the 60-turn ceiling after 97 minutes, and everything it had done
+was discarded because nothing was submitted. The failure is avoidable: the
+agent had no idea it was running out.
+
+Both loops now warn ten turns from the ceiling — land the current edit, run the
+tests once, submit, and name whatever is unfinished rather than implying
+success. A partial chunk that is submitted is worth more than a complete one
+that is not.
+
+---
+
+## Testing the read-only fan-out, and the three bugs that took
+
+`pipeline explore` had never been run. Testing it took three attempts, each
+blocked by a different defect, and the last one is the worst thing in this
+document.
+
+### 10. `pipeline explore` had never once started
+
+`pipeline/cli.py`
+
+`_cmd_explore` builds a `RunConfig` through `_build_run_config`, which reads
+`args.task`. The explore parser deliberately takes `--question` instead and so
+never calls `_add_common_args` — meaning it defines neither `--task` nor
+`--max-tokens`. The command died on `AttributeError: 'Namespace' object has no
+attribute 'task'` before sending a single request.
+
+Note what this means: the workflow had a full test file, 20-odd passing tests,
+and no possible way to run. Every test called `_stage_split`, `_run_single_agent`
+and `run_explore` directly; none went through the CLI. Same shape as the
+`resume` bug — a phase tested its functions and not its entry point.
+
+While fixing it: the explore stages hardcoded `max_tokens=4096`, the identical
+defect fix 3 found in the planner, and unreachable from the CLI either way.
+Plumbed through with a `--max-tokens` flag.
+
+### 11. Forced `tool_choice` does not force ds4
+
+`pipeline/explore.py`, `pipeline/planner.py`, `pipeline/merger.py`
+
+Second attempt: `RuntimeError: explorer did not submit questions within 10
+turns`. The split stage's last-resort safety net is a final turn with
+`tool_choice` pinned to `submit_questions`. It does not work.
+
+Reduced to a single call, ds4 answered a pinned `submit_questions` with a
+`list_dir` call — and kept doing it when offered *only* the `submit_questions`
+schema, inventing a `dir_path` argument that no tool in the request has. It was
+not choosing from the tools it was given; it was following the system prompt,
+which opens "First, use list_dir to get an overview."
+
+Swapping that system message on the final turn for one that only describes
+submitting makes the same model comply immediately. The fix is applied to all
+three loops that rely on forced-final — split, planner, merger — because each
+one had the same "explore first" / "you have full tool access" instruction
+fighting its own escape hatch.
+
+`_stage_split` additionally now degrades to a fan-out of one, using the original
+question as the sole sub-question, rather than raising after ten turns of paid
+exploration and returning nothing.
+
+### 12. Every tool call in the fan-out had been failing
+
+`pipeline/explore.py`
+
+Third attempt ran end to end and produced a confident, fluent, entirely
+unsourced answer — "due to persistent tool errors ... a general description of
+typical merger implementations rather than being sourced from the specific
+pipeline package's code."
+
+The event log said why. **31 of 31 tool calls returned
+`error: 'str' object has no attribute 'get'`.** Tool arguments arrive from the
+wire as a JSON string; both explore stages passed that string straight into
+`execute_tool`, which does `arguments.get(...)` on it. `read_file`, `list_dir`,
+`grep` and `glob` had never returned a byte of the repository. Three agents
+spent 10, 11 and 12 turns "exploring" a repo they could not read, and answered
+from priors.
+
+The planner and merger both decode this correctly, which is why the defect was
+local to explore and why nothing else caught it. Now a shared `_tool_arguments`
+helper handles string, dict, empty and malformed input.
+
+This is the most useful failure in the project. The run *succeeded* — exit 0, an
+answer produced, three sub-questions "answered", no exception anywhere. Nothing
+short of reading the event log would have shown that the entire read-only
+workflow was fabricating. An agent pipeline can fail this way silently, and
+plausible output is not evidence that the tools ran.
+
+### The run that finally worked
+
+Run `20260729-212753-00f073`, all stages on ds4:
+
+```
+tool calls: 20, errored: 0        (was 31 of 31 failing)
+agents:     finished in 3, 4, 10 turns   (was 10, 11, and hitting the ceiling)
+usage:      28 events, 100% reported     (was 0 events emitted at all)
+tokens:     199,303 prompt / 8,430 completion
+```
+
+The 6.2k-character answer is correct and file-attributed — `git clone --local`
+over worktrees and why, `.git/info/exclude` for build artifacts, the executor's
+per-wave `_integrate_chunk` fetch/merge/abort, the merger's two escalation
+triggers and `MAX_MERGE_TURNS`. Spot-checked against the source; the claims and
+the line references hold.
+
+### Known gap, not fixed
+
+`pipeline runs` reports "no runs found" for explore runs. They write an event
+log but no `state.json`, and `find_runs` keys off the state file. The listing is
+only documented for `run`/`resume`, so this is a scope question rather than a
+defect — recording it rather than widening the change.
