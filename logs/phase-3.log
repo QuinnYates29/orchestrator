@@ -1,0 +1,178 @@
+solo run 20260729-104153-45b2ea: ornith in /home/quinna/tools/orchestrator-p3
+events: /home/quinna/tools/orchestrator-p3/.pipeline-runs/20260729-104153-45b2ea/events.jsonl
+2026-07-29 10:41:54,533 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:41:59,028 pipeline.solo INFO turn 1: 1 tool call(s), 0 content chars, 107 reasoning chars, tool_calls, 6s
+2026-07-29 10:41:59,030 pipeline.solo INFO   list_dir -> d  .git
+2026-07-29 10:41:59,313 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:42:01,771 pipeline.solo INFO turn 2: 2 tool call(s), 0 content chars, 68 reasoning chars, tool_calls, 3s
+2026-07-29 10:42:01,773 pipeline.solo INFO   list_dir -> f  __init__.py
+2026-07-29 10:42:01,773 pipeline.solo INFO   list_dir -> f  stub_backend.py
+2026-07-29 10:42:01,946 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:42:07,152 pipeline.solo INFO turn 3: 4 tool call(s), 0 content chars, 83 reasoning chars, tool_calls, 5s
+2026-07-29 10:42:07,153 pipeline.solo INFO   read_file -> """Shared dataclasses for the pipeline. No I/O here - pure data + a few
+2026-07-29 10:42:07,154 pipeline.solo INFO   read_file -> """Entrypoint for the pipeline's workflows.
+2026-07-29 10:42:07,155 pipeline.solo INFO   read_file -> """ds4-full plans the work: explores the repo with read-only tools, then
+2026-07-29 10:42:07,156 pipeline.solo INFO   read_file -> """Per-agent isolated git workspaces.
+2026-07-29 10:42:08,849 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:42:16,084 pipeline.solo INFO turn 4: 3 tool call(s), 0 content chars, 91 reasoning chars, tool_calls, 9s
+2026-07-29 10:42:16,086 pipeline.solo INFO   read_file -> """ds4-light supervision: watches all running Ornith agents concurrently for
+2026-07-29 10:42:16,086 pipeline.solo INFO   read_file -> """Append-only JSONL event log for a run.
+2026-07-29 10:42:16,087 pipeline.solo INFO   read_file -> from __future__ import annotations
+2026-07-29 10:42:16,656 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:44:17,209 pipeline.solo INFO turn 5: 3 tool call(s), 54 content chars, 93 reasoning chars, tool_calls, 121s
+2026-07-29 10:44:17,210 pipeline.solo INFO   read_file -> """ds4-full reviews all chunks' diffs and integrates them directly into the
+2026-07-29 10:44:17,210 pipeline.solo INFO   read_file -> """The Ornith worker agent loop: a streaming ReAct tool-calling loop for one
+2026-07-29 10:44:17,211 pipeline.solo INFO   read_file -> """Thin async client for the orchestrator's OpenAI-compatible + /admin API.
+2026-07-29 10:44:17,600 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:44:27,919 pipeline.solo INFO turn 6: 1 tool call(s), 86 content chars, 91 reasoning chars, tool_calls, 11s
+2026-07-29 10:44:27,920 pipeline.solo INFO   read_file -> from __future__ import annotations
+2026-07-29 10:44:28,521 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:44:45,193 pipeline.solo INFO turn 7: 1 tool call(s), 0 content chars, 673 reasoning chars, tool_calls, 17s
+2026-07-29 10:44:45,195 pipeline.solo INFO   read_file ->    130:
+2026-07-29 10:44:45,799 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:48:45,780 pipeline.solo INFO turn 8: 0 tool call(s), 0 content chars, 6732 reasoning chars, no finish_reason, 241s
+2026-07-29 10:48:45,781 pipeline.solo WARNING turn 8: empty response (6732 reasoning chars, finish_reason=none), nudge 1/2
+2026-07-29 10:48:57,618 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:49:27,669 pipeline.solo INFO turn 9: 2 tool call(s), 0 content chars, 153 reasoning chars, tool_calls, 42s
+2026-07-29 10:49:27,670 pipeline.solo INFO   read_file -> """Agent tool implementations: read_file, write_file, list_dir, run_shell,
+2026-07-29 10:49:27,672 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 10:49:27,838 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:52:07,149 pipeline.solo INFO turn 10: 2 tool call(s), 0 content chars, 604 reasoning chars, tool_calls, 159s
+2026-07-29 10:52:07,169 pipeline.solo INFO   read_file -> """Verification: run a configured command and report pass/fail/skip.
+2026-07-29 10:52:07,171 pipeline.solo INFO   read_file -> """Shared async subprocess execution, used by workspace.py (git) and
+2026-07-29 10:52:07,328 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:53:18,579 pipeline.solo INFO turn 11: 0 tool call(s), 0 content chars, 783 reasoning chars, no finish_reason, 71s
+2026-07-29 10:53:18,580 pipeline.solo WARNING turn 11: empty response (783 reasoning chars, finish_reason=none), nudge 1/2
+2026-07-29 10:53:24,443 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:53:59,928 pipeline.solo INFO turn 12: 1 tool call(s), 0 content chars, 820 reasoning chars, tool_calls, 41s
+2026-07-29 10:53:59,929 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 10:54:00,104 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:59:18,543 pipeline.solo INFO turn 13: 0 tool call(s), 0 content chars, 7891 reasoning chars, no finish_reason, 319s
+2026-07-29 10:59:18,543 pipeline.solo WARNING turn 13: empty response (7891 reasoning chars, finish_reason=none), nudge 1/2
+2026-07-29 10:59:29,320 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:00:03,795 pipeline.solo INFO turn 14: 1 tool call(s), 81 content chars, 636 reasoning chars, tool_calls, 45s
+2026-07-29 11:00:03,796 pipeline.solo INFO   edit_file -> edited pipeline/models.py (1 replacement)
+2026-07-29 11:00:04,048 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:00:11,443 pipeline.solo INFO turn 15: 1 tool call(s), 0 content chars, 108 reasoning chars, tool_calls, 8s
+2026-07-29 11:00:11,463 pipeline.solo INFO   edit_file -> edited pipeline/planner.py (1 replacement)
+2026-07-29 11:00:11,596 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:00:16,063 pipeline.solo INFO turn 16: 1 tool call(s), 44 content chars, 331 reasoning chars, tool_calls, 5s
+2026-07-29 11:00:16,064 pipeline.solo INFO   read_file -> """ds4-full plans the work: explores the repo with read-only tools, then
+2026-07-29 11:00:16,268 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:00:53,177 pipeline.solo INFO turn 17: 1 tool call(s), 173 content chars, 337 reasoning chars, tool_calls, 37s
+2026-07-29 11:00:53,178 pipeline.solo INFO   edit_file -> edited pipeline/planner.py (1 replacement)
+2026-07-29 11:00:53,646 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:00:56,948 pipeline.solo INFO turn 18: 1 tool call(s), 0 content chars, 101 reasoning chars, tool_calls, 4s
+2026-07-29 11:00:56,949 pipeline.solo INFO   read_file -> """ds4-full plans the work: explores the repo with read-only tools, then
+2026-07-29 11:00:57,116 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:01:46,733 pipeline.solo INFO turn 19: 1 tool call(s), 67 content chars, 160 reasoning chars, tool_calls, 50s
+2026-07-29 11:01:46,734 pipeline.solo INFO   edit_file -> edited pipeline/planner.py (1 replacement)
+2026-07-29 11:01:46,903 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:05:49,175 pipeline.solo INFO turn 20: 0 tool call(s), 0 content chars, 105 reasoning chars, no finish_reason, 242s
+2026-07-29 11:05:49,175 pipeline.solo WARNING turn 20: empty response (105 reasoning chars, finish_reason=none), nudge 1/2
+2026-07-29 11:05:49,306 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:08:48,396 pipeline.solo INFO turn 21: 1 tool call(s), 0 content chars, 365 reasoning chars, tool_calls, 179s
+2026-07-29 11:08:48,397 pipeline.solo INFO   edit_file -> edited pipeline/planner.py (1 replacement)
+2026-07-29 11:08:48,659 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:09:12,429 pipeline.solo INFO turn 22: 1 tool call(s), 56 content chars, 718 reasoning chars, tool_calls, 24s
+2026-07-29 11:09:12,430 pipeline.solo INFO   read_file ->     40:        return self.scratch_dir or (self.repo / ".pipeline-runs")
+2026-07-29 11:09:12,576 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 11:10:23,454 pipeline.solo INFO turn 23: 0 tool call(s), 0 content chars, 79 reasoning chars, no finish_reason, 71s
+2026-07-29 11:10:23,454 pipeline.solo WARNING turn 23: empty response (79 reasoning chars, finish_reason=none), nudge 1/2
+2026-07-29 11:10:27,387 httpx INFO HTTP Request: POST http://10.0.0.17:8080/v1/chat/completions "HTTP/1.1 200 OK"
+Traceback (most recent call last):
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpx/_transports/default.py", line 271, in __aiter__
+    async for part in self._httpcore_stream:
+        yield part
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpcore/_async/connection_pool.py", line 407, in __aiter__
+    raise exc from None
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpcore/_async/connection_pool.py", line 403, in __aiter__
+    async for part in self._stream:
+        yield part
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpcore/_async/http11.py", line 342, in __aiter__
+    raise exc
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpcore/_async/http11.py", line 334, in __aiter__
+    async for chunk in self._connection._receive_response_body(**kwargs):
+        yield chunk
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpcore/_async/http11.py", line 203, in _receive_response_body
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpcore/_async/http11.py", line 213, in _receive_event
+    with map_exceptions({h11.RemoteProtocolError: RemoteProtocolError}):
+         ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.14/lib/python3.14/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.RemoteProtocolError: peer closed connection without sending complete message body (incomplete chunked read)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/quinna/tools/orchestrator-impl/pipeline/cli.py", line 364, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/home/quinna/tools/orchestrator-impl/pipeline/cli.py", line 357, in main
+    return _cmd_solo(args, pcfg)
+  File "/home/quinna/tools/orchestrator-impl/pipeline/cli.py", line 285, in _cmd_solo
+    result = asyncio.run(solo_session(
+        model=model, repo=repo, task=config.task,
+    ...<3 lines>...
+        ensure_resident=not args.no_load,
+    ))
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.14/lib/python3.14/asyncio/runners.py", line 205, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.14/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.14/lib/python3.14/asyncio/base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/quinna/tools/orchestrator-impl/pipeline/solo.py", line 238, in solo_session
+    return await run_solo(
+           ^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/home/quinna/tools/orchestrator-impl/pipeline/solo.py", line 102, in run_solo
+    async for event in client.chat_stream(
+    ...<11 lines>...
+                tool_calls = event.tool_calls
+  File "/home/quinna/tools/orchestrator-impl/pipeline/client.py", line 123, in chat_stream
+    async for line in r.aiter_lines():
+    ...<33 lines>...
+        yield event
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpx/_models.py", line 1031, in aiter_lines
+    async for text in self.aiter_text():
+        for line in decoder.decode(text):
+            yield line
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpx/_models.py", line 1018, in aiter_text
+    async for byte_content in self.aiter_bytes():
+    ...<2 lines>...
+            yield chunk
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpx/_models.py", line 997, in aiter_bytes
+    async for raw_bytes in self.aiter_raw():
+    ...<2 lines>...
+            yield chunk
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpx/_models.py", line 1055, in aiter_raw
+    async for raw_stream_bytes in self.stream:
+    ...<2 lines>...
+            yield chunk
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpx/_client.py", line 176, in __aiter__
+    async for chunk in self._stream:
+        yield chunk
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpx/_transports/default.py", line 270, in __aiter__
+    with map_httpcore_exceptions():
+         ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/linuxbrew/.linuxbrew/opt/python@3.14/lib/python3.14/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/quinna/tools/orchestrator/.venv/lib/python3.14/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.RemoteProtocolError: peer closed connection without sending complete message body (incomplete chunked read)

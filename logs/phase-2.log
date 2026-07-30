@@ -1,0 +1,169 @@
+solo run 20260729-080935-7ba795: ds4-full in /home/quinna/tools/orchestrator-impl
+events: /home/quinna/tools/orchestrator-impl/.pipeline-runs/20260729-080935-7ba795/events.jsonl
+2026-07-29 08:09:36,090 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:10:04,023 pipeline.solo INFO turn 1: 5 tool call(s), 74 content chars, 326 reasoning chars, 28s
+2026-07-29 08:10:04,024 pipeline.solo INFO   read_file -> """The Ornith worker agent loop: a streaming ReAct tool-calling loop for one
+2026-07-29 08:10:04,024 pipeline.solo INFO   read_file -> """Shared dataclasses for the pipeline. No I/O here - pure data + a few
+2026-07-29 08:10:04,042 pipeline.solo INFO   read_file -> """Loads the `pipeline:` block out of the orchestrator's config.yaml.
+2026-07-29 08:10:04,043 pipeline.solo INFO   read_file -> """Agent tool implementations: read_file, write_file, list_dir, run_shell,
+2026-07-29 08:10:04,045 pipeline.solo INFO   read_file -> """Shared async subprocess execution, used by workspace.py (git) and
+2026-07-29 08:10:04,089 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:10:37,477 pipeline.solo INFO turn 2: 3 tool call(s), 0 content chars, 68 reasoning chars, 33s
+2026-07-29 08:10:37,478 pipeline.solo INFO   read_file -> from __future__ import annotations
+2026-07-29 08:10:37,478 pipeline.solo INFO   read_file -> from __future__ import annotations
+2026-07-29 08:10:37,478 pipeline.solo INFO   read_file -> from __future__ import annotations
+2026-07-29 08:10:37,499 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:11:20,108 pipeline.solo INFO turn 3: 2 tool call(s), 0 content chars, 111 reasoning chars, 43s
+2026-07-29 08:11:20,112 pipeline.solo INFO   grep -> 149:SUBMIT_WORK_TOOL = {
+2026-07-29 08:11:20,112 pipeline.solo INFO   read_file -> """Per-agent isolated git workspaces.
+2026-07-29 08:11:20,125 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:12:04,666 pipeline.solo INFO turn 4: 2 tool call(s), 0 content chars, 104 reasoning chars, 45s
+2026-07-29 08:12:04,666 pipeline.solo INFO   read_file ->    140:                "type": "object",
+2026-07-29 08:12:04,686 pipeline.solo INFO   read_file -> """Thin async client for the orchestrator's OpenAI-compatible + /admin API.
+2026-07-29 08:12:04,708 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:13:17,467 pipeline.solo INFO turn 5: 1 tool call(s), 0 content chars, 1210 reasoning chars, 73s
+2026-07-29 08:13:17,468 pipeline.solo INFO   read_file ->    149:SUBMIT_WORK_TOOL = {
+2026-07-29 08:13:17,489 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:14:19,878 pipeline.solo INFO turn 6: 1 tool call(s), 0 content chars, 675 reasoning chars, 62s
+2026-07-29 08:14:19,878 pipeline.solo INFO   read_file ->    380:    except Exception as e:
+2026-07-29 08:14:19,923 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:15:34,657 pipeline.solo INFO turn 7: 2 tool call(s), 61 content chars, 1089 reasoning chars, 75s
+2026-07-29 08:15:34,659 pipeline.solo INFO   read_file -> """Multi-agent implementation pipeline built on top of the orchestrator's
+2026-07-29 08:15:34,659 pipeline.solo INFO   read_file -> """Single-agent driver: one model, one working directory, no clones, no
+2026-07-29 08:15:34,681 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:17:33,386 pipeline.solo INFO turn 8: 1 tool call(s), 109 content chars, 1126 reasoning chars, 119s
+2026-07-29 08:17:33,387 pipeline.solo INFO   write_file -> wrote 1952 chars to pipeline/verify.py
+2026-07-29 08:17:33,402 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:18:48,276 pipeline.solo INFO turn 9: 1 tool call(s), 0 content chars, 43 reasoning chars, 75s
+2026-07-29 08:18:48,278 pipeline.solo INFO   edit_file -> edited pipeline/models.py (1 replacement)
+2026-07-29 08:18:48,299 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:20:15,846 pipeline.solo INFO turn 10: 1 tool call(s), 0 content chars, 65 reasoning chars, 88s
+2026-07-29 08:20:15,846 pipeline.solo INFO   edit_file -> edited pipeline/models.py (1 replacement)
+2026-07-29 08:20:15,868 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:21:50,474 pipeline.solo INFO turn 11: 1 tool call(s), 0 content chars, 1058 reasoning chars, 95s
+2026-07-29 08:21:50,475 pipeline.solo INFO   edit_file -> edited pipeline/models.py (1 replacement)
+2026-07-29 08:21:50,495 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:23:16,947 pipeline.solo INFO turn 12: 1 tool call(s), 87 content chars, 1320 reasoning chars, 86s
+2026-07-29 08:23:16,947 pipeline.solo INFO   read_file ->      1:"""Shared dataclasses for the pipeline. No I/O here - pure data + a few
+2026-07-29 08:23:16,970 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:25:26,799 pipeline.solo INFO turn 13: 1 tool call(s), 42 content chars, 217 reasoning chars, 130s
+2026-07-29 08:25:26,800 pipeline.solo INFO   edit_file -> edited pipeline/models.py (1 replacement)
+2026-07-29 08:25:26,823 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:26:41,739 pipeline.solo INFO turn 14: 1 tool call(s), 0 content chars, 105 reasoning chars, 75s
+2026-07-29 08:26:41,758 pipeline.solo INFO   edit_file -> edited pipeline/models.py (1 replacement)
+2026-07-29 08:26:41,782 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:27:49,370 pipeline.solo INFO turn 15: 1 tool call(s), 73 content chars, 198 reasoning chars, 68s
+2026-07-29 08:27:49,372 pipeline.solo INFO   read_file -> """The Ornith worker agent loop: a streaming ReAct tool-calling loop for one
+2026-07-29 08:27:49,394 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:32:04,734 pipeline.solo INFO turn 16: 1 tool call(s), 47 content chars, 956 reasoning chars, 255s
+2026-07-29 08:32:04,735 pipeline.solo INFO   write_file -> wrote 9655 chars to pipeline/worker.py
+2026-07-29 08:32:04,760 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:34:42,484 pipeline.solo INFO turn 17: 1 tool call(s), 0 content chars, 3197 reasoning chars, 158s
+2026-07-29 08:34:42,485 pipeline.solo INFO   edit_file -> error: '                    # Verification failed — append a user message to repair\n                    state.repair_at
+2026-07-29 08:34:42,513 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:36:01,180 pipeline.solo INFO turn 18: 1 tool call(s), 0 content chars, 97 reasoning chars, 79s
+2026-07-29 08:36:01,181 pipeline.solo INFO   read_file ->    130:                no_tool_streak += 1
+2026-07-29 08:36:01,207 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:37:20,307 pipeline.solo INFO turn 19: 1 tool call(s), 50 content chars, 137 reasoning chars, 79s
+2026-07-29 08:37:20,307 pipeline.solo INFO   read_file -> """The Ornith worker agent loop: a streaming ReAct tool-calling loop for one
+2026-07-29 08:37:20,334 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:38:44,911 pipeline.solo INFO turn 20: 1 tool call(s), 0 content chars, 73 reasoning chars, 85s
+2026-07-29 08:38:44,914 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 08:38:44,941 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:41:37,763 pipeline.solo INFO turn 21: 1 tool call(s), 190 content chars, 4072 reasoning chars, 173s
+2026-07-29 08:41:37,764 pipeline.solo INFO   edit_file -> edited pipeline/worker.py (1 replacement)
+2026-07-29 08:41:37,792 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:45:32,898 pipeline.solo INFO turn 22: 1 tool call(s), 36 content chars, 5278 reasoning chars, 235s
+2026-07-29 08:45:32,899 pipeline.solo INFO   write_file -> wrote 2137 chars to tests/test_pipeline_verify.py
+2026-07-29 08:45:32,927 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:47:09,677 pipeline.solo INFO turn 23: 1 tool call(s), 0 content chars, 546 reasoning chars, 97s
+2026-07-29 08:47:09,680 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 08:47:09,732 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:48:42,180 pipeline.solo INFO turn 24: 1 tool call(s), 0 content chars, 197 reasoning chars, 93s
+2026-07-29 08:48:42,377 pipeline.solo INFO   run_shell -> exit code: 4
+2026-07-29 08:48:42,406 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:50:09,084 pipeline.solo INFO turn 25: 1 tool call(s), 0 content chars, 65 reasoning chars, 87s
+2026-07-29 08:50:09,085 pipeline.solo INFO   list_dir -> d  __pycache__
+2026-07-29 08:50:09,136 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:51:40,190 pipeline.solo INFO turn 26: 1 tool call(s), 0 content chars, 70 reasoning chars, 91s
+2026-07-29 08:51:40,360 pipeline.solo INFO   run_shell -> exit code: 4
+2026-07-29 08:51:40,392 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:53:13,229 pipeline.solo INFO turn 27: 1 tool call(s), 0 content chars, 226 reasoning chars, 93s
+2026-07-29 08:53:13,250 pipeline.solo INFO   run_shell -> exit code: 2
+2026-07-29 08:53:13,281 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:54:43,289 pipeline.solo INFO turn 28: 1 tool call(s), 0 content chars, 104 reasoning chars, 90s
+2026-07-29 08:54:43,292 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 08:54:43,342 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:56:14,610 pipeline.solo INFO turn 29: 1 tool call(s), 0 content chars, 165 reasoning chars, 91s
+2026-07-29 08:56:14,611 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 08:56:14,641 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:57:47,874 pipeline.solo INFO turn 30: 1 tool call(s), 0 content chars, 139 reasoning chars, 93s
+2026-07-29 08:57:47,876 pipeline.solo INFO   run_shell -> exit code: 2
+2026-07-29 08:57:47,909 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 08:59:23,044 pipeline.solo INFO turn 31: 1 tool call(s), 0 content chars, 233 reasoning chars, 95s
+2026-07-29 08:59:23,047 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 08:59:23,097 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:01:01,879 pipeline.solo INFO turn 32: 1 tool call(s), 130 content chars, 149 reasoning chars, 99s
+2026-07-29 09:01:01,881 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 09:01:01,914 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:02:38,665 pipeline.solo INFO turn 33: 1 tool call(s), 0 content chars, 129 reasoning chars, 97s
+2026-07-29 09:04:18,869 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 09:04:18,890 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:06:08,064 pipeline.solo INFO turn 34: 1 tool call(s), 0 content chars, 580 reasoning chars, 109s
+2026-07-29 09:06:08,069 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 09:06:08,101 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:07:48,334 pipeline.solo INFO turn 35: 1 tool call(s), 0 content chars, 207 reasoning chars, 100s
+2026-07-29 09:09:28,987 pipeline.solo INFO   run_shell -> exit code: 1
+2026-07-29 09:09:29,026 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:11:30,859 pipeline.solo INFO turn 36: 1 tool call(s), 144 content chars, 869 reasoning chars, 122s
+2026-07-29 09:13:11,078 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 09:13:11,100 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:14:57,854 pipeline.solo INFO turn 37: 1 tool call(s), 29 content chars, 242 reasoning chars, 107s
+2026-07-29 09:14:57,872 pipeline.solo INFO   read_file -> from __future__ import annotations
+2026-07-29 09:14:57,896 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:17:09,104 pipeline.solo INFO turn 38: 1 tool call(s), 119 content chars, 1242 reasoning chars, 131s
+2026-07-29 09:17:09,106 pipeline.solo INFO   read_file -> from __future__ import annotations
+2026-07-29 09:17:09,128 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:22:07,500 pipeline.solo INFO turn 39: 1 tool call(s), 39 content chars, 875 reasoning chars, 298s
+2026-07-29 09:22:07,501 pipeline.solo INFO   write_file -> wrote 7602 chars to tests/test_pipeline_worker.py
+2026-07-29 09:22:07,533 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:24:09,511 pipeline.solo INFO turn 40: 1 tool call(s), 0 content chars, 487 reasoning chars, 122s
+2026-07-29 09:24:09,512 pipeline.solo INFO   read_file -> """The Ornith worker agent loop: a streaming ReAct tool-calling loop for one
+2026-07-29 09:24:09,536 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:26:43,117 pipeline.solo INFO turn 41: 1 tool call(s), 207 content chars, 989 reasoning chars, 154s
+2026-07-29 09:26:43,119 pipeline.solo INFO   edit_file -> edited pipeline/worker.py (1 replacement)
+2026-07-29 09:26:43,150 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:35:20,174 pipeline.solo INFO turn 42: 1 tool call(s), 136 content chars, 10038 reasoning chars, 517s
+2026-07-29 09:35:20,175 pipeline.solo INFO   write_file -> wrote 7903 chars to tests/test_pipeline_worker.py
+2026-07-29 09:35:20,208 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:42:16,900 pipeline.solo INFO turn 43: 1 tool call(s), 46 content chars, 4321 reasoning chars, 417s
+2026-07-29 09:42:16,901 pipeline.solo INFO   write_file -> wrote 8654 chars to tests/test_pipeline_worker.py
+2026-07-29 09:42:16,936 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:49:08,495 pipeline.solo INFO turn 44: 1 tool call(s), 381 content chars, 3207 reasoning chars, 412s
+2026-07-29 09:49:08,495 pipeline.solo INFO   write_file -> wrote 8764 chars to tests/test_pipeline_worker.py
+2026-07-29 09:49:08,532 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:55:21,004 pipeline.solo INFO turn 45: 1 tool call(s), 46 content chars, 1384 reasoning chars, 373s
+2026-07-29 09:55:21,005 pipeline.solo INFO   write_file -> wrote 8482 chars to tests/test_pipeline_worker.py
+2026-07-29 09:55:21,044 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 09:58:04,222 pipeline.solo INFO turn 46: 1 tool call(s), 0 content chars, 446 reasoning chars, 163s
+2026-07-29 09:59:44,549 pipeline.solo INFO   run_shell -> exit code: 1
+2026-07-29 09:59:44,590 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:04:54,277 pipeline.solo INFO turn 47: 1 tool call(s), 217 content chars, 4174 reasoning chars, 310s
+2026-07-29 10:04:54,278 pipeline.solo INFO   edit_file -> edited tests/test_pipeline_worker.py (1 replacement)
+2026-07-29 10:05:54,648 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:10:02,669 pipeline.solo INFO turn 48: 1 tool call(s), 0 content chars, 1386 reasoning chars, 308s
+2026-07-29 10:10:02,670 pipeline.solo INFO   edit_file -> edited tests/test_pipeline_worker.py (1 replacement)
+2026-07-29 10:11:03,260 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:14:14,367 pipeline.solo INFO turn 49: 1 tool call(s), 0 content chars, 873 reasoning chars, 252s
+2026-07-29 10:15:54,649 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 10:16:18,530 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-29 10:19:22,067 pipeline.solo INFO turn 50: 1 tool call(s), 199 content chars, 272 reasoning chars, 207s
+2026-07-29 10:21:03,191 pipeline.solo INFO   run_shell -> exit code: 0
+2026-07-29 10:22:24,840 httpx INFO HTTP Request: POST http://127.0.0.1:8080/v1/chat/completions "HTTP/1.1 503 Service Unavailable"
+2026-07-29 10:22:25,449 pipeline.solo ERROR turn 51: orchestrator returned 503: {'error': {'message': "no backend available for this request (preferred: ds4, reason: client-profile) — not resident and autoload didn't bring one up in time (or none in the chain has launch_cmd/autoload set). Check /admin/status and load one manually via POST /admin/load.", 'type': 'orchestrator_error', 'code': 'model_not_resident'}}
+
+=== solo 20260729-080935-7ba795 ===
+model: ds4-full  stop_reason: error  turns: 51  tool calls: 59
+tokens: 0 prompt / 0 completion  (132.9 min)
+
+orchestrator error 503: {'error': {'message': "no backend available for this request (preferred: ds4, reason: client-profile) — not resident and autoload didn't bring one up in time (or none in the chain has launch_cmd/autoload set). Check /admin/status and load one manually via POST /admin/load.", 'type': 'orchestrator_error', 'code': 'model_not_resident'}}
