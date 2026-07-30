@@ -157,13 +157,16 @@ def test_long_line_exact_boundary():
 # ---------------------------------------------------------------------------
 
 def test_all_checks_has_expected_names():
-    names = [name for name, desc, func in ALL_CHECKS]
-    assert names == ["debug-print", "todo-comment", "bare-except", "long-line"]
+    names = sorted(ALL_CHECKS)
+    assert names == ["bare-except", "debug-print", "long-line", "todo-comment"]
 
 
 def test_all_checks_functions_are_callable():
-    for name, desc, func in ALL_CHECKS:
-        assert callable(func)
+    # ALL_CHECKS is now a set of names; the actual functions are in _CHECK_REGISTRY
+    from reviewbot.checks import _CHECK_REGISTRY
+    for name in ALL_CHECKS:
+        assert name in _CHECK_REGISTRY
+        assert callable(_CHECK_REGISTRY[name][1])
 
 
 # ---------------------------------------------------------------------------

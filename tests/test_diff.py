@@ -337,9 +337,9 @@ def _collect_in_repo(extra_args: list[str]) -> str:
             if extra_args:
                 if extra_args[0] == "--cached":
                     # staged only
-                    text = collect_diff(cached=True)
+                    text = collect_diff(staged=True)
                 elif extra_args[0] == "HEAD":
-                    text = collect_diff(revision="HEAD")
+                    text = collect_diff(rev="HEAD")
                 else:
                     text = collect_diff()
             else:
