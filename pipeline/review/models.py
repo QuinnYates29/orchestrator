@@ -22,6 +22,12 @@ class Hunk:
     """One contiguous changed region within a file."""
     start_line: int              # 1-indexed line number in the NEW file
     lines: list[str] = field(default_factory=list)   # added lines only, no leading '+'
+    # The real new-file line number for each entry in `lines`. Required because
+    # added lines are NOT contiguous from start_line - a hunk interleaves context
+    # and removed lines, so `start_line + index` reports a finding against
+    # whatever happens to sit at that offset. Optional so a Hunk built by hand
+    # still works, falling back to the old contiguous assumption.
+    line_numbers: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -37,8 +43,10 @@ class FileDiff:
         """Every added line as (line_number, text), across all hunks."""
         out: list[tuple[int, str]] = []
         for hunk in self.hunks:
-            for offset, text in enumerate(hunk.lines):
-                out.append((hunk.start_line + offset, text))
+            if len(hunk.line_numbers) == len(hunk.lines):
+                out.extend(zip(hunk.line_numbers, hunk.lines))
+            else:
+                out.extend((hunk.start_line + i, t) for i, t in enumerate(hunk.lines))
         return out
 
 
@@ -50,6 +58,10 @@ class Finding:
     severity: Severity
     check: str                   # the check's short name, e.g. "debug-print"
     message: str
+    # Which pass produced this: "static" for a deterministic check, "model" for
+    # the reviewing agent. Kept so a reader can weigh them differently - a
+    # regex match is certain about what it matched, a model's judgement is not.
+    source: str = "static"
 
 
 @dataclass
@@ -57,6 +69,7 @@ class Review:
     """The full result of reviewing a diff."""
     findings: list[Finding] = field(default_factory=list)
     files_reviewed: int = 0
+    summary: str = ""            # prose overview, only set by the model pipeline
 
     @property
     def has_errors(self) -> bool:

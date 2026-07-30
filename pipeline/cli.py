@@ -3,6 +3,7 @@
     pipeline run     --repo PATH --task "..."    fan-out/merge (plan -> N agents -> merge)
     pipeline solo    --repo PATH --task "..."    single agent, one working directory
     pipeline explore --repo PATH --question "..."   read-only research fan-out
+    pipeline review  --repo PATH [--rev REV]      read-only code review of a diff
     pipeline resume  --repo PATH <run_id>         resume an interrupted run
     pipeline runs    --repo PATH                  list runs
 
@@ -27,11 +28,14 @@ from .merger import merge
 from .models import AgentStatus, ChunkOutcome, Plan, RunConfig, RunReport
 from .explore import explore_session
 from .planner import create_plan
+from .review.flow import review_session
 from .solo import ensure_model_resident, solo_session
 from .state import RunState, RunSummary, find_runs, load_state, save_state
 from .workspace import capture_base_commit, cleanup_workspace
 
 log = logging.getLogger("pipeline.cli")
+
+_REVIEW_MAX_LINE = 120
 
 
 def _add_common_args(p: argparse.ArgumentParser) -> None:
@@ -87,6 +91,57 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Skip the /admin/load residency checks (the backend is already up). "
                             "Required when pointing --orchestrator-url straight at a llama-server "
                             "rather than at the routing proxy.")
+
+    review_p = sub.add_parser(
+        "review", help="Read-only code review of a diff: deterministic checks, then a "
+                       "read-only agent per changed file.",
+        description="Reviews a git diff and reports findings. Never modifies the "
+                    "repository - the agents are given read-only tools only, so "
+                    "write_file, edit_file and run_shell are absent from the request "
+                    "rather than merely discouraged. Static checks run first for free; "
+                    "a model is spent only on what a regex cannot see.",
+    )
+    review_p.add_argument("--repo", type=Path, default=Path.cwd(),
+                          help="Repository to review. Defaults to the current directory.")
+    review_p.add_argument("--rev", default=None,
+                          help="Review changes since this revision (e.g. HEAD~1, origin/main). "
+                               "Default: unstaged changes.")
+    review_p.add_argument("--staged", action="store_true",
+                          help="Review staged changes instead (git diff --cached).")
+    review_p.add_argument("--static-only", action="store_true",
+                          help="Run only the deterministic checks. No model calls, instant, "
+                               "free - this is the pre-commit-hook mode.")
+    review_p.add_argument("--format", choices=["text", "json"], default="text")
+    review_p.add_argument("--check", action="append", default=None, metavar="NAME",
+                          help="Run only this static check. Repeatable.")
+    review_p.add_argument("--ignore", action="append", default=None, metavar="NAME",
+                          help="Skip this static check. Repeatable.")
+    review_p.add_argument("--list-checks", action="store_true",
+                          help="Print the static checks and exit.")
+    review_p.add_argument("--max-line-length", type=int, default=_REVIEW_MAX_LINE,
+                          help=f"Limit for the long-line check (default {_REVIEW_MAX_LINE}).")
+    review_p.add_argument("--max-files", type=int, default=20,
+                          help="Cap on files given to a model agent, largest change first "
+                               "(default 20). The static pass always covers every file.")
+    review_p.add_argument("--no-summary", action="store_true",
+                          help="Skip the closing summary call.")
+    review_p.add_argument("--model", default=None,
+                          help="Model for the reviewing agents. Defaults to "
+                               "pipeline.roles.explorer.")
+    review_p.add_argument("--orchestrator-url", default="http://127.0.0.1:8080/v1")
+    review_p.add_argument("--admin-url", default="http://127.0.0.1:8080")
+    review_p.add_argument("--api-key", default=os.environ.get("ORCHESTRATOR_API_KEY"))
+    review_p.add_argument("--config", type=Path, default=None,
+                          help="Path to config.yaml holding the `pipeline:` block.")
+    review_p.add_argument("--scratch-dir", type=Path, default=None,
+                          help="Where the event log lives. Defaults to <repo>/.pipeline-runs.")
+    review_p.add_argument("--max-agent-turns", type=int, default=None,
+                          help="Turn ceiling per file agent (default 12).")
+    review_p.add_argument("--max-tokens", type=int, default=8192,
+                          help="Per-turn generation cap.")
+    review_p.add_argument("--load-wait-s", type=float, default=180.0)
+    review_p.add_argument("--no-load", action="store_true",
+                          help="Skip the residency check (the backend is already up).")
 
     solo_p = sub.add_parser(
         "solo", help="Run a single agent directly in one working directory.",
@@ -372,6 +427,74 @@ def _cmd_run(args, pcfg) -> int:
     return 0 if not report.failed else 1
 
 
+def _cmd_review(args, pcfg) -> int:
+    from .review.checks import registry as _check_registry
+    from .review.flow import MAX_AGENT_TURNS, run_review
+    from .review.report import format_json, format_text
+
+    if args.list_checks:
+        for name, check in sorted(_check_registry().items()):
+            langs = ", ".join(sorted(check.languages)) if check.languages else "all files"
+            print(f"{name:<22} {check.severity.value:<9} {langs:<30} {check.description}")
+        return 0
+
+    repo = args.repo.resolve()
+    if not repo.exists():
+        raise SystemExit(f"{repo} does not exist")
+
+    model = args.model or pcfg.roles.explorer
+    run_id = time.strftime("%Y%m%d-%H%M%S") + "-review"
+    scratch = args.scratch_dir or (repo / ".pipeline-runs")
+    events = EventLog.for_run(scratch, run_id)
+
+    mode = "static only" if args.static_only else model
+    print(f"review {run_id}: {mode} in {repo}", file=sys.stderr)
+    print(f"events: {events.path}", file=sys.stderr)
+
+    kwargs = dict(
+        rev=args.rev, staged=args.staged,
+        enabled_checks=set(args.check) if args.check else None,
+        ignored_checks=set(args.ignore) if args.ignore else None,
+        max_line_length=args.max_line_length,
+        max_files=args.max_files,
+        max_turns=args.max_agent_turns or MAX_AGENT_TURNS,
+        max_tokens=args.max_tokens,
+        concurrency=pcfg.limits.max_concurrent_workers,
+        summarise=not args.no_summary,
+        events=events,
+    )
+
+    try:
+        if args.static_only:
+            run = asyncio.run(run_review(None, repo=repo, static_only=True, **kwargs))
+        else:
+            run = asyncio.run(review_session(
+                repo=repo, model=model,
+                orchestrator_url=args.orchestrator_url, admin_url=args.admin_url,
+                api_key=args.api_key, pipeline_cfg=pcfg,
+                load_wait_s=args.load_wait_s, ensure_resident=not args.no_load,
+                **kwargs,
+            ))
+    except ValueError as e:            # an unknown --check name
+        print(f"review: {e}", file=sys.stderr)
+        return 2
+    except Exception as e:             # not a repo, bad revision, git missing
+        print(f"review: could not run: {e}", file=sys.stderr)
+        return 2
+
+    print(format_json(run.review) if args.format == "json" else format_text(run.review))
+
+    print(f"\n{run.static_findings} static + {run.model_findings} model finding(s) "
+          f"in {run.duration_s / 60:.1f} min "
+          f"({run.prompt_tokens:,} prompt / {run.completion_tokens:,} completion tokens)",
+          file=sys.stderr)
+    # A review that silently skipped part of the diff must not read as clean.
+    for fr in run.unreviewed:
+        print(f"  NOT REVIEWED: {fr.path} - {fr.error or fr.stop_reason}", file=sys.stderr)
+
+    return 1 if run.review.has_errors else 0
+
+
 def _cmd_explore(args, pcfg) -> int:
     repo = args.repo.resolve()
     if not repo.exists():
@@ -617,6 +740,8 @@ def main(argv=None) -> int:
         return _cmd_solo(args, pcfg)
     if args.command == "explore":
         return _cmd_explore(args, pcfg)
+    if args.command == "review":
+        return _cmd_review(args, pcfg)
     if args.command == "resume":
         return _cmd_resume(args, pcfg)
     if args.command == "runs":

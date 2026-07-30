@@ -182,11 +182,43 @@ index a..b 100644
         assert len(files[0].hunks) == 0
 
     def test_added_lines_property(self) -> None:
+        """The hunk starts at new-file line 1 and two context lines precede the
+        additions, so they land on lines 3 and 4 - not 1 and 2. This test used
+        to assert the latter, encoding the very off-by-N it was meant to catch:
+        added lines are not contiguous from start_line."""
         diff = _make_simple_diff()
         files = parse_diff(diff)
-        fd = files[0]
-        added = fd.added_lines
-        assert added == [(1, "added1"), (2, "added2")]
+        assert files[0].added_lines == [(3, "added1"), (4, "added2")]
+
+    def test_added_line_numbers_skip_context_lines(self) -> None:
+        diff = (
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+            "@@ -1,4 +1,6 @@\n ctx1\n ctx2\n ctx3\n+new1\n ctx4\n+new2\n"
+        )
+        assert parse_diff(diff)[0].added_lines == [(4, "new1"), (6, "new2")]
+
+    def test_removed_lines_do_not_advance_the_new_file_counter(self) -> None:
+        """A removed line exists only in the old file."""
+        diff = (
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+            "@@ -1,4 +1,3 @@\n ctx1\n-gone1\n-gone2\n+new1\n"
+        )
+        assert parse_diff(diff)[0].added_lines == [(2, "new1")]
+
+    def test_line_numbers_are_correct_in_a_later_hunk(self) -> None:
+        diff = (
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+            "@@ -1,2 +1,3 @@\n ctx\n+early\n"
+            "@@ -40,3 +41,4 @@\n ctx\n ctx\n+late\n"
+        )
+        assert parse_diff(diff)[0].added_lines == [(2, "early"), (43, "late")]
+
+    def test_a_hand_built_hunk_still_works(self) -> None:
+        """line_numbers is optional, so callers that build a Hunk directly
+        (tests, other tools) keep the old contiguous behaviour."""
+        from pipeline.review.models import FileDiff, Hunk
+        fd = FileDiff(path="a.py", hunks=[Hunk(start_line=10, lines=["a", "b"])])
+        assert fd.added_lines == [(10, "a"), (11, "b")]
 
     def test_hunk_with_only_added_lines(self) -> None:
         text = """diff --git a/a.py b/a.py

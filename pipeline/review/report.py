@@ -13,9 +13,15 @@ def _severity_str(severity: Severity) -> str:
 
 
 def _line_text(finding: Finding) -> str:
-    """Format a single finding as 'path:line: SEVERITY [check] message'."""
+    """Format a single finding as 'path:line: SEVERITY [check] message'.
+
+    A model-sourced finding is marked with a trailing `(model)` so a reader can
+    weigh it differently: a regex is certain about what it matched, a model's
+    judgement is not.
+    """
     sev = _severity_str(finding.severity)
-    return f"{finding.path}:{finding.line}: {sev} [{finding.check}] {finding.message}"
+    mark = "  (model)" if getattr(finding, "source", "static") == "model" else ""
+    return f"{finding.path}:{finding.line}: {sev} [{finding.check}] {finding.message}{mark}"
 
 
 def format_text(review: Review) -> str:
@@ -35,7 +41,7 @@ def format_text(review: Review) -> str:
         Formatted text report.
     """
     if not review.findings:
-        return "No findings."
+        return "No findings." + (f"\n\n{review.summary}" if review.summary else "")
 
     # Group findings by file
     grouped: dict[str, list[Finding]] = {}
@@ -61,6 +67,9 @@ def format_text(review: Review) -> str:
     if review.files_reviewed:
         summary += f" ({review.files_reviewed} reviewed)"
     lines.append(summary)
+    if review.summary:
+        lines.append("")
+        lines.append(review.summary)
 
     return "\n".join(lines)
 
@@ -92,11 +101,14 @@ def format_json(review: Review) -> str:
             "severity": _severity_str(f.severity),
             "check": f.check,
             "message": f.message,
+            "source": getattr(f, "source", "static"),
         })
 
     obj: dict[str, Any] = {
         "findings": findings_list,
         "files_reviewed": review.files_reviewed,
     }
+    if review.summary:
+        obj["summary"] = review.summary
 
     return json.dumps(obj, indent=2)

@@ -34,6 +34,8 @@ def parse_diff(text: str) -> list[FileDiff]:
     in_hunk = False
     current_start_line = 0
     current_added: list[str] = []
+    current_numbers: list[int] = []
+    new_lineno = 0
     saw_binary = False
 
     for raw in lines:
@@ -50,7 +52,8 @@ def parse_diff(text: str) -> list[FileDiff]:
             if current_file is not None and not saw_binary:
                 if current_added:
                     current_file.hunks.append(
-                        Hunk(start_line=current_start_line, lines=list(current_added))
+                        Hunk(start_line=current_start_line, lines=list(current_added),
+                             line_numbers=list(current_numbers))
                     )
                 files.append(current_file)
             elif current_file is not None and saw_binary:
@@ -59,6 +62,7 @@ def parse_diff(text: str) -> list[FileDiff]:
             current_file = None
             in_hunk = False
             current_added.clear()
+            current_numbers.clear()
             saw_binary = False
 
             # extract path after "diff --git "
@@ -95,11 +99,14 @@ def parse_diff(text: str) -> list[FileDiff]:
             # flush previous hunk
             if current_file is not None and current_added and not saw_binary:
                 current_file.hunks.append(
-                    Hunk(start_line=current_start_line, lines=list(current_added))
+                    Hunk(start_line=current_start_line, lines=list(current_added),
+                             line_numbers=list(current_numbers))
                 )
             current_added.clear()
+            current_numbers.clear()
             # new hunk: start_line is from the '+' side (new file)
             current_start_line = int(m.group(2))
+            new_lineno = current_start_line
             in_hunk = True
             continue
 
@@ -110,12 +117,17 @@ def parse_diff(text: str) -> list[FileDiff]:
             continue
 
         if line.startswith("+") and not line.startswith("+++"):
-            # added line
+            # An added line occupies a line in the new file, so record where it
+            # actually lands before advancing the counter.
             current_added.append(line[1:])
+            current_numbers.append(new_lineno)
+            new_lineno += 1
         elif line.startswith("-"):
-            # removed line – skip
+            # A removed line exists only in the old file; it does not move the
+            # new-file counter.
             pass
         elif line.startswith(" "):
+            new_lineno += 1
             # context line – skip
             pass
 
@@ -123,7 +135,8 @@ def parse_diff(text: str) -> list[FileDiff]:
     if current_file is not None:
         if current_added and not saw_binary:
             current_file.hunks.append(
-                Hunk(start_line=current_start_line, lines=list(current_added))
+                Hunk(start_line=current_start_line, lines=list(current_added),
+                             line_numbers=list(current_numbers))
             )
         files.append(current_file)
 

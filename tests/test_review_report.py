@@ -121,6 +121,6 @@ def test_format_json_indent():
     # Re-encode the expected structure and compare
     expected = json.dumps({"findings": [
         {"path": "a.py", "line": 1, "severity": "info",
-         "check": "c", "message": "m"}
+         "check": "c", "message": "m", "source": "static"}
     ], "files_reviewed": 1}, indent=2)
     assert result == expected
