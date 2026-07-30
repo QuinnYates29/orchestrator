@@ -1,0 +1,34 @@
+# Single-model pipeline config: every role on ds4.
+#
+# The default config.yaml splits roles between ds4-full and ornith, but
+# ds4-full declares `unload_before_load: [ornith, ...]` - they cannot be
+# resident at the same time on the GX10. Use this file when only ds4 is up:
+#
+#   pipeline run --config pipeline-ds4.yaml ...
+#
+# Only the `pipeline:` block is read, so this file does not need a `models:`
+# section - the orchestrator's own config.yaml still governs the fleet.
+pipeline:
+  roles:
+    planner: ds4
+    worker: ds4
+    supervisor: ds4
+    merger: ds4
+    explorer: ds4
+
+  verify:
+    # Run inside each agent's own clone after it calls submit_work. A failure
+    # is fed back into the same conversation to repair, twice, before the
+    # chunk is given up on. null would mean "skipped", which is never the same
+    # as "passed".
+    command: python3 -m pytest tests/ -q
+    timeout_s: 600
+    max_repair_attempts: 2
+
+  limits:
+    # One backend serving every role, so parallel workers queue against each
+    # other rather than running truly concurrently. Two keeps the wave moving
+    # without making each turn crawl.
+    max_concurrent_workers: 2
+    max_agent_turns: 40
+    tool_output_chars: 8000
