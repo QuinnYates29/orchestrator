@@ -5,6 +5,10 @@ fleet of local model backends (shipinabottle GLM, llama.cpp servers). It picks
 a backend per-request with cheap heuristics, adapts the request for whatever
 quirks that backend has, and relays the response — streaming or not.
 
+This repo also ships `pipeline`, a multi-agent build pipeline that runs on
+top of this proxy — see [The `pipeline` package](#the-pipeline-package-multi-agent-build-pipeline)
+if that's what you're here for.
+
 ## Quickstart
 
 ```bash
@@ -454,6 +458,122 @@ client.chat.completions.create(model="ds4", messages=[...], tools=[...])
 immediately) or was started manually outside the orchestrator — it just
 polls `/v1/models`, it doesn't require the orchestrator to have launched
 the process.
+
+## The `pipeline` package: multi-agent build pipeline
+
+`pipeline/` is a separate console script (`pipeline`, from the same `pip
+install -e .`) built as a pure HTTP client of the orchestrator above — it
+imports nothing from the `orchestrator` package and just assumes a server is
+already reachable at `--orchestrator-url`/`--admin-url` (default
+`127.0.0.1:8080`). Start the orchestrator first; `pipeline` commands 503 the
+same way any other client would if the model they need isn't up.
+
+The core workflow (`run`) is fan-out/merge: a planner model splits a task
+into chunks, N worker agents implement chunks in parallel each in its own
+isolated local git clone (`git clone --local`, not a worktree — see
+`workspace.py`), a supervisor model watches all of them concurrently for
+stuck-thinking loops, and a merger model integrates finished chunks back into
+the real repo, escalating real conflicts to a model rather than failing the
+run. Everything is driven by the same `pipeline.config.RolesCfg` model
+assignments (below), so which fleet model plays which role is one config
+change, not a code change.
+
+```bash
+.venv/bin/pipeline run --repo /path/to/target-repo --task "implement X" \
+    --config pipeline-full.yaml
+```
+
+### Subcommands
+
+| Command | Purpose |
+|---|---|
+| `pipeline run --repo PATH --task "..."` (or `--task-file FILE`) | Plan → fan out N agents → merge. The original/default command; `run` can be omitted for backward compatibility with pre-subcommand invocations. |
+| `pipeline solo --repo PATH --task "..."` | Single agent, one working directory — no planning/fan-out, for tasks too small to split. |
+| `pipeline explore --repo PATH --question "..."` | Read-only research fan-out; answers a question about the repo instead of changing it. |
+| `pipeline review --repo PATH [--rev REV \| --staged]` | Read-only code review of a diff — static checks plus an optional model pass. Changes nothing. |
+| `pipeline resume --repo PATH RUN_ID` | Resume an interrupted/partially-failed run: only re-runs chunks that didn't succeed, reusing the stored plan and everything already merged. Always prefer this over a fresh `run` when a resumable run exists. |
+| `pipeline runs --repo PATH` | List past runs — chunk counts by status, whether a merge landed, token totals. |
+| `pipeline chat --repo PATH` | Interactive: you talk to one model turn-by-turn and it drives `run`/`resume`/`runs` itself via shell, backgrounding long operations and reporting status from `events.jsonl`/`state.json`. Useful for "continue the build" / "what happened to that failed chunk" without remembering run ids. |
+
+Every subcommand takes `--orchestrator-url`, `--admin-url`, `--api-key`
+(defaults to `$ORCHESTRATOR_API_KEY`), and `--config`. Run state and event
+logs live under `.pipeline-runs/<run_id>/` in the *target* repo (`--repo`),
+not this one.
+
+### Configuring roles, verification, and limits
+
+`pipeline` reads a `pipeline:` block from a config file — by default the
+same `config.yaml` this orchestrator uses, so a run reasonably defaults to
+whatever fleet is already configured. Pass `--config` to point at a
+different file instead; the file only needs the `pipeline:` block, since the
+orchestrator's own `config.yaml` still governs the actual model fleet:
+
+```yaml
+pipeline:
+  roles:              # which fleet model/launch-profile plays each role
+    planner: ds4-full
+    worker: ornith
+    supervisor: ds4-light
+    merger: ds4-full
+    explorer: ornith
+
+  verify:              # run inside each agent's clone after submit_work
+    command: python3 -m pytest tests/ -q   # null = skipped, never silently assumed to pass
+    timeout_s: 600
+    max_repair_attempts: 2
+
+  limits:
+    max_concurrent_workers: 4
+    max_agent_turns: 60
+    tool_output_chars: 8000
+```
+
+Unknown keys are a hard error (not a silently-ignored typo) — see
+`pipeline/config.py`. Two ready-made alternates ship in this repo:
+`pipeline-ds4.yaml` (every role on one model, for boxes where the full/light
+split can't be resident together) and `pipeline-full.yaml` (the default
+roles with `verify` restored, since a plain `run` without `--config`
+otherwise merges chunks with zero test verification).
+
+### Further reading
+
+- `pipeline/SCOPE_LESSONS.md` — concrete failure modes observed from real
+  runs (turn-budget-killed chunks with fully passing, uncommitted work;
+  the scratch integration branch and the final merge disagreeing about a
+  completed dependency's contents; merge escalation writing outside the one
+  conflict it was asked to resolve) and which are fixed vs. still open.
+- `CLAUDE_FIXES.md` — a running log of harness bugs found and fixed while
+  using the pipeline to build other projects, each with the failure
+  symptom, root cause, and commit.
+- Every tool call (`read_file`, `write_file`, `run_shell`, ...) has **no
+  path sandboxing** — an agent has full shell access within its isolated
+  clone (`pipeline/tools.py`). Isolation comes from each attempt running in
+  its own throwaway `git clone --local`, not from restricting what a tool
+  call can touch inside it. Merge-conflict escalation is the one place this
+  currently reaches outside a single agent's own workspace with the same
+  unrestricted access — see Finding 3 in `SCOPE_LESSONS.md`.
+
+### Adapting this for another codebase/company
+
+The pipeline itself is repo-agnostic — nothing in `pipeline/` hardcodes a
+project. Forking this to build a *different* codebase (a new branch here,
+company-specific) usually means touching only:
+
+- **`config.yaml` / a new `pipeline-*.yaml`** — which models play which
+  role, `verify.command` (point it at that repo's actual test runner), and
+  concurrency/turn limits sized to the new hardware.
+- **`pipeline/planner.py`'s `_system_prompt`** and **`pipeline/worker.py`'s
+  `build_initial_messages`** — if the new codebase has conventions (a
+  monorepo layout, a required review process, forbidden files) the current
+  chunk-splitting/scope rules don't cover.
+- **The orchestrator's own `config.yaml`** (`models:`/`routing:`) if the new
+  environment has a different model fleet or backend endpoints entirely —
+  see [Auth and CORS](#auth-and-cors) above if it's reachable beyond a
+  trusted LAN.
+
+Nothing under `orchestrator/` needs to change to point `pipeline` at a new
+target repo — `--repo` on any subcommand is the only thing that varies
+per-project.
 
 ## Should routing use a model instead of regex?
 
