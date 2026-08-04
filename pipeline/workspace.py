@@ -26,15 +26,24 @@ async def capture_base_commit(repo: Path) -> str:
 
 
 async def create_agent_workspace(config: RunConfig, chunk: PlanChunk, attempt: int,
-                                  base_commit: str) -> tuple[Path, str]:
+                                  base_commit: str, clone_source: Path | None = None,
+                                  ) -> tuple[Path, str]:
     """Clone the repo and check out a fresh branch from base_commit. Returns
-    (workspace_path, branch_name)."""
+    (workspace_path, branch_name).
+
+    `clone_source` defaults to `config.repo` (the real target repo), but a
+    later-wave chunk needs to see earlier waves' merged work, which only
+    exists in the run's scratch integration repo (see executor.py's
+    `integration_path`) - the real repo is never touched until the final
+    merge phase. Pass that path so `base_commit` resolves to something
+    actually present in the clone's object store."""
     dest = config.resolved_scratch_dir() / config.run_id / f"{chunk.id}-attempt{attempt}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         raise RuntimeError(f"workspace already exists: {dest}")
 
-    code, _, err = await run_argv(["git", "clone", "--local", "--quiet", str(config.repo), str(dest)])
+    source = clone_source or config.repo
+    code, _, err = await run_argv(["git", "clone", "--local", "--quiet", str(source), str(dest)])
     if code != 0:
         raise RuntimeError(f"git clone failed for {chunk.id} attempt {attempt}: {err.strip()}")
 

@@ -50,7 +50,16 @@ def build_initial_messages(chunk: PlanChunk, plan: Plan, retry_context: str = ""
 
     user = f"# {chunk.title}\n\n{chunk.description}"
     if chunk.scope:
-        user += "\n\nExpected scope (files/directories this chunk should touch): " + ", ".join(chunk.scope)
+        user += (
+            "\n\nExpected scope (files/directories this chunk should touch): "
+            + ", ".join(chunk.scope)
+            + ". Do not edit files outside this scope - especially ones owned by a "
+              "dependency chunk. If a file like config/config.py already exists because "
+              "a dependency chunk completed, its design is settled: read it and build on "
+              "it, don't rewrite it to match your own assumptions. Regenerating an "
+              "already-correct shared file is how one chunk's own tests pass while it "
+              "silently breaks another chunk's."
+        )
     if chunk.context:
         user += "\n\nAdditional context:\n" + chunk.context
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]

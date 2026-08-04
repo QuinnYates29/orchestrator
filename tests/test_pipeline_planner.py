@@ -41,9 +41,12 @@ def test_parse_plan_single_chunk_when_work_does_not_split():
     assert len(plan.chunks) == 1
 
 
-def test_parse_plan_rejects_zero_chunks():
-    with pytest.raises(RuntimeError, match="zero chunks"):
-        _parse_plan({"chunks": []})
+def test_parse_plan_accepts_zero_chunks():
+    """_parse_plan itself no longer rejects an empty plan - the zero-chunks
+    check moved to _plan_structure_error so it's fed back to the model as a
+    retry prompt instead of crashing the run outright."""
+    plan = _parse_plan({"chunks": []})
+    assert plan.chunks == []
 
 
 def test_parse_plan_title_defaults_to_id_when_missing():
@@ -74,6 +77,11 @@ def _c(cid, depends_on=()) -> _PlanChunk:
 
 def test_valid_plan_has_no_structure_error():
     assert _plan_structure_error(_plan(_c("a"), _c("b", ["a"]))) is None
+
+
+def test_zero_chunks_is_reported():
+    problem = _plan_structure_error(_plan())
+    assert problem and "zero chunks" in problem
 
 
 def test_dangling_dependency_is_reported_with_the_real_ids():

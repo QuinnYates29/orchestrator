@@ -252,9 +252,10 @@ async def _run_one_chunk(
     events: EventLog,
     attempt: int,
     semaphore: asyncio.Semaphore | None = None,
+    clone_source: Path | None = None,
 ) -> AgentState:
     """Run one attempt of one chunk. Returns the final AgentState."""
-    ws_path, branch = await create_agent_workspace(config, chunk, attempt, base_commit)
+    ws_path, branch = await create_agent_workspace(config, chunk, attempt, base_commit, clone_source)
     state = AgentState(
         chunk=chunk, attempt=attempt,
         workspace=ws_path, branch=branch, base_commit=base_commit,
@@ -308,11 +309,21 @@ async def execute_plan(
     load_wait_s: float,
     base_commit: str,
     completed_outcomes: dict[str, ChunkOutcome] | None = None,
+    attempt_offsets: dict[str, int] | None = None,
 ) -> list[ChunkOutcome]:
     """Run ``plan`` wave by wave, bounded by ``max_concurrent_workers``.
 
     Returns the full list of ``ChunkOutcome`` — completed, failed, and
     skipped — in planner order, never silently dropping SKIPPED chunks.
+
+    ``attempt_offsets`` maps chunk id -> highest attempt number already on
+    disk from a prior invocation (``_cmd_resume`` computes this by scanning
+    workspace dirs). Without it, a resumed chunk that was previously attempted
+    - marked incomplete so it re-runs, e.g. after a real bug in its old
+    attempt is discovered - collides with its own leftover ``-attempt1``
+    directory and crashes with "workspace already exists" before ever
+    starting. A chunk with no prior attempt on disk simply isn't in this
+    dict, so ``.get(id, 0) + 1`` still starts it at attempt 1 as before.
 
     ``completed_outcomes`` maps chunk id -> outcome for chunks a previous run
     already finished. Those are carried through untouched rather than re-run,
@@ -322,13 +333,22 @@ async def execute_plan(
     becomes runnable again.
     """
     completed_outcomes = completed_outcomes or {}
+    attempt_offsets = attempt_offsets or {}
     waves = topological_waves(plan.chunks)
     semaphore = asyncio.Semaphore(config.limits.max_concurrent_workers)
 
-    # Map chunk id -> integration commit once a wave has produced one.
-    effective_base: dict[str, str] = {}
-    for c in plan.chunks:
-        effective_base[c.id] = base_commit
+    # The commit later waves should branch from: base_commit until a wave
+    # completes and integrates, then whatever that wave produced. A single
+    # accumulator, not per-chunk-id: the integration repo is one shared,
+    # cumulative clone (see integration_path below), so *every* dependent
+    # chunk - regardless of which specific chunk(s) it depends_on - sees the
+    # same cumulative result once its wave starts. (A prior version of this
+    # keyed by chunk.id and wrote the new head back under the *completed*
+    # chunk's own id - which never runs again - so no dependent chunk ever
+    # actually advanced past base_commit. Every later-wave chunk cloned the
+    # original empty commit and had no choice but to reinvent whatever
+    # earlier chunks had already built.)
+    latest_integration_head = base_commit
 
     # Integration repo under scratch so it's cleaned up with the run.
     integration_path = config.resolved_scratch_dir() / config.run_id / "integration"
@@ -352,6 +372,21 @@ async def execute_plan(
     # integration runs per completed chunk, not per wave boundary, so a
     # single-wave plan reaches it too. It is a local clone, so this is cheap.
     await _init_integration_repo(integration_path, config.repo, base_commit)
+
+    # A resumed run seeds outcomes_by_id from a previous invocation's
+    # completed chunks (above), but this integration_path is brand new -
+    # those chunks' work has never been merged into *this* clone. Without
+    # this, a resume's new chunks would clone from an integration_path that
+    # only reflects what completed during *this* invocation, silently losing
+    # visibility into everything a prior `run`/`resume` already finished.
+    # Order matches plan.chunks (planner/wave order) so dependencies that
+    # both landed are folded in an order consistent with how they were built.
+    for chunk in plan.chunks:
+        prior = completed_outcomes.get(chunk.id)
+        if prior is not None:
+            new_head = await _integrate_chunk(integration_path, chunk, prior, events)
+            if new_head:
+                latest_integration_head = new_head
 
     # --- Supervisor covers the *entire* execution phase across all waves.
     agents: dict[str, tuple[AgentState, asyncio.Task]] = {}
@@ -389,17 +424,20 @@ async def execute_plan(
                 ready.append(chunk)
 
         if ready:
-            # Determine the base for each ready chunk: if it depends on
-            # earlier waves, use the latest integration commit; otherwise
-            # use base_commit.
+            # Snapshot once per wave: every chunk in this wave - including a
+            # same-wave blind retry - branches from the same commit,
+            # regardless of when sibling chunks in this same wave finish and
+            # advance latest_integration_head below. The next wave picks up
+            # whatever this one leaves latest_integration_head pointing at.
+            wave_base = latest_integration_head
             coros: list[tuple[PlanChunk, asyncio.Task[AgentState]]] = []
             pending_tasks: dict[str, asyncio.Task[AgentState]] = {}
             for chunk in ready:
-                base = effective_base[chunk.id]
+                first_attempt = attempt_offsets.get(chunk.id, 0) + 1
                 task = asyncio.create_task(
                     _run_one_chunk(
-                        client, config, plan, chunk, base, events,
-                        1, semaphore,
+                        client, config, plan, chunk, wave_base, events,
+                        first_attempt, semaphore, integration_path,
                     ), name=chunk.id)
                 pending_tasks[chunk.id] = task
 
@@ -421,14 +459,15 @@ async def execute_plan(
                     continue
                 state = task.result()  # type: ignore[possibly-undefined]
 
+                first_attempt = attempt_offsets.get(chunk.id, 0) + 1
                 if state.status in (AgentStatus.KILLED, AgentStatus.TIMED_OUT) \
-                        and state.attempt == 1:
+                        and state.attempt == first_attempt:
                     # One blind retry from the same base.
-                    log.info("retrying %s (attempt 2) after %s: %s",
-                             chunk.id, state.status.value, state.kill_reason)
+                    log.info("retrying %s (attempt %d) after %s: %s",
+                             chunk.id, first_attempt + 1, state.status.value, state.kill_reason)
                     retry_state = await _run_one_chunk(
                         client, config, plan, chunk,
-                        effective_base[chunk.id], events, 2, semaphore,
+                        wave_base, events, first_attempt + 1, semaphore, integration_path,
                     )
                     state = retry_state
 
@@ -440,12 +479,16 @@ async def execute_plan(
                 outcomes.append(outcome)
 
                 # If completed, try integrating into the integration repo.
+                # Advances latest_integration_head for the *next* wave - safe
+                # to do incrementally here since this wave's dispatch/retry
+                # already captured wave_base above, before any sibling in
+                # this wave could have integrated and moved it.
                 if outcome.status == AgentStatus.COMPLETED:
                     new_head = await _integrate_chunk(
                         integration_path, chunk, outcome, events,
                     )
                     if new_head:
-                        effective_base[chunk.id] = new_head
+                        latest_integration_head = new_head
 
                 _save_run_state(config, plan, outcomes, base_commit)
 

@@ -1,0 +1,27 @@
+# Multi-model pipeline config: default.yaml's roles (ds4-full/ornith/ds4-light)
+# with verify restored. The default config.yaml next to the package leaves
+# verify.command null (there's no --verify-command CLI flag to set it
+# per-run despite the comment in config.yaml suggesting one), so a plain
+# `run` without --config silently merges chunks with zero test verification.
+#
+#   pipeline run --config pipeline-full.yaml ...
+#
+# Only the `pipeline:` block is read - the orchestrator's own config.yaml
+# still governs the model fleet.
+pipeline:
+  roles:
+    planner: ds4-full
+    worker: ornith
+    supervisor: ds4-light
+    merger: ds4-full
+    explorer: ornith
+
+  verify:
+    command: python3 -m pytest tests/ -q
+    timeout_s: 600
+    max_repair_attempts: 2
+
+  limits:
+    max_concurrent_workers: 4
+    max_agent_turns: 60
+    tool_output_chars: 8000

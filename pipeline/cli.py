@@ -6,6 +6,7 @@
     pipeline review  --repo PATH [--rev REV]      read-only code review of a diff
     pipeline resume  --repo PATH <run_id>         resume an interrupted run
     pipeline runs    --repo PATH                  list runs
+    pipeline chat    --repo PATH                  interactive: model drives run/resume/runs itself
 
 `run` keeps every flag it had before the subcommand split, so existing
 invocations work by inserting the word `run`.
@@ -21,6 +22,7 @@ import time
 from pathlib import Path
 
 from . import config as pipeline_config
+from .chat import chat_session
 from .client import OrchestratorClient
 from .events import EventLog
 from .executor import execute_plan
@@ -242,6 +244,40 @@ def build_parser() -> argparse.ArgumentParser:
     runs_p.add_argument("--config", type=Path, default=None,
                         help="Path to config.yaml holding the `pipeline:` block. Defaults to the one "
                              "next to the package.")
+
+    chat_p = sub.add_parser(
+        "chat", help="Interactive chat: the model drives run/resume/runs for you via run_shell.",
+        description="Talk to one model turn-by-turn. It launches, resumes, and checks on fan-out "
+                    "runs itself by invoking `python -m pipeline.cli run/resume/runs` through "
+                    "run_shell (backgrounded for anything long-running), and reads events.jsonl/ "
+                    "state.json to report status - so 'continue the build' or 'what happened to "
+                    "that failed chunk' can be answered without you remembering run ids or flags.",
+    )
+    chat_p.add_argument("--repo", type=Path, default=Path.cwd(),
+                        help="Target repository root. Defaults to the current directory.")
+    chat_p.add_argument("--model", default=None,
+                        help="Model or launch profile to chat with. Defaults to pipeline.roles.worker "
+                             "from config.yaml (ornith by default - fast, and already the model the "
+                             "fan-out pipeline's own worker role uses, so it doesn't fight the "
+                             "pipeline for residency any more than necessary).")
+    chat_p.add_argument("--orchestrator-url", default="http://127.0.0.1:8080/v1")
+    chat_p.add_argument("--admin-url", default="http://127.0.0.1:8080")
+    chat_p.add_argument("--api-key", default=os.environ.get("ORCHESTRATOR_API_KEY"))
+    chat_p.add_argument("--config", type=Path, default=None,
+                        help="Path to config.yaml holding the `pipeline:` block - also the one passed "
+                             "to any run/resume the model launches. Defaults to the one next to the "
+                             "package.")
+    chat_p.add_argument("--load-wait-s", type=float, default=180.0,
+                        help="How long the initial /admin/load call blocks waiting for the chat "
+                             "model to become resident.")
+    chat_p.add_argument("--run-shell-timeout-s", type=float, default=900.0,
+                        help="Dead-man's-switch on a single run_shell call (default 15min). Only "
+                             "matters for foreground commands - run/resume must be backgrounded "
+                             "per the system prompt, so this should rarely bind.")
+    chat_p.add_argument("--max-tokens", type=int, default=8192,
+                        help="Per-turn generation cap.")
+    chat_p.add_argument("--no-load", action="store_true",
+                        help="Skip the /admin/load residency check (the backend is already up).")
     return p
 
 
@@ -297,7 +333,7 @@ async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog,
                        plan: Plan | None = None,
                        base_commit: str | None = None,
                        existing_outcomes: list[ChunkOutcome] | None = None,
-                       max_attempts: int | None = None) -> RunReport:
+                       max_attempts: dict[str, int] | None = None) -> RunReport:
     """Plan, fan out, merge.
 
     `resume` supplies `plan`, `base_commit` and `existing_outcomes` from a
@@ -351,6 +387,7 @@ async def run_pipeline(config: RunConfig, load_wait_s: float, events: EventLog,
             client, config, plan, events,
             load_wait_s=load_wait_s, base_commit=base_commit,
             completed_outcomes=done or None,
+            attempt_offsets=max_attempts,
         )
 
         succeeded = sum(1 for o in outcomes if o.status == AgentStatus.COMPLETED)
@@ -578,6 +615,11 @@ def _cmd_resume(args, pcfg) -> int:
         run_shell_timeout_s=args.run_shell_timeout_s,
         max_agent_turns=args.max_agent_turns or pcfg.limits.max_agent_turns,
         roles=pcfg.roles.as_dict(),
+        # Same fix as _build_run_config: without these, RunConfig's dataclass
+        # defaults apply instead of --config's, so verify.command silently
+        # reverts to None (skipped) on every resume regardless of --config.
+        verify=pcfg.verify,
+        limits=pcfg.limits,
     )
 
     events = EventLog.for_run(config.resolved_scratch_dir(), config.run_id)
@@ -732,6 +774,22 @@ def _cmd_runs(args, pcfg) -> int:
     return 0
 
 
+def _cmd_chat(args, pcfg) -> int:
+    repo = args.repo.resolve()
+    if not repo.exists():
+        raise SystemExit(f"{repo} does not exist")
+    model = args.model or pcfg.roles.worker
+    config_display = str(args.config) if args.config else "(default config.yaml)"
+    asyncio.run(chat_session(
+        model=model, repo=repo,
+        orchestrator_url=args.orchestrator_url, admin_url=args.admin_url,
+        api_key=args.api_key, config_display=config_display,
+        load_wait_s=args.load_wait_s, run_shell_timeout_s=args.run_shell_timeout_s,
+        max_tokens=args.max_tokens, ensure_resident=not args.no_load,
+    ))
+    return 0
+
+
 def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
@@ -746,6 +804,8 @@ def main(argv=None) -> int:
         return _cmd_resume(args, pcfg)
     if args.command == "runs":
         return _cmd_runs(args, pcfg)
+    if args.command == "chat":
+        return _cmd_chat(args, pcfg)
     return _cmd_run(args, pcfg)
 
 

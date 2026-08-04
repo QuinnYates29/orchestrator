@@ -100,7 +100,17 @@ def _system_prompt(config: RunConfig) -> str:
         "3. If two chunks would both edit the same file, they conflict. Either give one chunk sole "
         "ownership of that file, or make the second `depends_on` the first. A shared registry, "
         "`__init__.py`, or config file that every chunk must append to belongs to exactly one "
-        "chunk - usually the first - and the others declare a dependency on it."
+        "chunk - usually the first - and the others declare a dependency on it.\n\n"
+        "4. Size each chunk so a from-scratch re-implementation, not just a lucky first pass, "
+        "fits the turn budget. A merge conflict that escalation cannot resolve throws the whole "
+        "chunk away and reruns it in a fresh clone starting at turn zero - the retry gets no "
+        "credit for the first attempt's progress. A chunk that bundles several independent "
+        "subsystems (e.g. 'market data, indicators, strategy, risk, and event triggers' as one "
+        "chunk) can fully complete and pass its tests on attempt 1 and then still be killed for "
+        "exceeding the turn ceiling on attempt 2, with fully working code sitting uncommitted in "
+        "the workspace. Prefer more, narrower chunks - one subsystem per chunk, each its own "
+        "vertical slice with its own tests - even if several end up in the same wave; a narrow "
+        "chunk is cheap to redo completely, a wide one is not."
         f"{cap_note}"
     )
 
@@ -203,6 +213,9 @@ def _plan_structure_error(plan: Plan) -> str | None:
     a whole exploration round-trip."""
     from .executor import topological_waves  # local: executor imports models, not planner
 
+    if not plan.chunks:
+        return "you submitted zero chunks - call submit_plan again with at least one chunk describing actual work"
+
     seen: set[str] = set()
     for chunk in plan.chunks:
         if chunk.id in seen:
@@ -241,8 +254,6 @@ def _parse_plan(raw_arguments) -> Plan:
     else:
         args = raw_arguments
     chunks_raw = args.get("chunks") or []
-    if not chunks_raw:
-        raise RuntimeError("the planner submitted a plan with zero chunks")
     chunks = [
         PlanChunk(
             id=c["id"], title=c.get("title", c["id"]), description=c.get("description", ""),
